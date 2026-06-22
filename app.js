@@ -1541,52 +1541,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ── SETTINGS VIEW ─────────────────────────────────────
   function renderSettingsView() {
-    const configUrl  = spUrl  || localStorage.getItem(SP_URL_KEY)  || "";
-    const configKey  = spAnonKey || localStorage.getItem(SP_ANON_KEY) || "";
-    const configOmdb = omdbKey || localStorage.getItem(OMDB_KEY_LS) || "";
-
     renderLayout(`
       <div class="container" style="max-width:640px;padding:3rem var(--gutter);">
         <div class="page-header">
           <div class="section-label">Configuration</div>
           <h1 class="page-title" style="font-size:1.8rem;">Settings</h1>
-        </div>
-
-        <div class="specs-card" style="margin-bottom:1.5rem;">
-          <div class="specs-card-header"><div class="specs-card-title">Supabase Credentials</div></div>
-          <div style="padding:1.5rem;">
-            <form id="supabase-form">
-              <div class="form-group">
-                <label class="form-label" for="db-url">Project URL</label>
-                <input type="text" id="db-url" class="form-input" value="${configUrl}" placeholder="https://xyz.supabase.co">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="db-key">Anon Key</label>
-                <input type="password" id="db-key" class="form-input" value="${configKey}" placeholder="eyJ...">
-              </div>
-              <div style="display:flex;gap:0.75rem;margin-top:1.5rem;">
-                <button type="submit" class="btn btn-primary">Save & Reload</button>
-                <button type="button" id="clear-db-btn" class="btn btn-ghost">Clear</button>
-              </div>
-            </form>
-          </div>
-        </div>
-
-        <div class="specs-card" style="margin-bottom:1.5rem;">
-          <div class="specs-card-header"><div class="specs-card-title">OMDb API Key</div></div>
-          <div style="padding:1.5rem;">
-            <p style="font-size:0.8rem;color:var(--text-2);margin-bottom:1rem;line-height:1.6;">
-              Required for the Movies page. Get a key at
-              <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" style="color:var(--text);border-bottom:1px solid var(--border-hover);">omdbapi.com</a>.
-            </p>
-            <form id="omdb-form">
-              <div class="form-group">
-                <label class="form-label" for="omdb-key">API Key</label>
-                <input type="password" id="omdb-key" class="form-input" value="${configOmdb}" placeholder="Paste your OMDb API key">
-              </div>
-              <button type="submit" class="btn btn-primary" style="margin-top:1rem;">Save OMDb Key</button>
-            </form>
-          </div>
         </div>
 
         ${currentUser ? `
@@ -1605,35 +1564,6 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
           </div>`}
       </div>`);
-
-    document.getElementById("supabase-form")?.addEventListener("submit", e => {
-      e.preventDefault();
-      const url = document.getElementById("db-url")?.value.trim();
-      const key = document.getElementById("db-key")?.value.trim();
-      if (url && key) {
-        localStorage.setItem(SP_URL_KEY, url);
-        localStorage.setItem(SP_ANON_KEY, key);
-        showToast("Saved. Reloading...");
-        setTimeout(() => window.location.reload(), 1000);
-      } else showToast("Enter both URL and key.");
-    });
-
-    document.getElementById("clear-db-btn")?.addEventListener("click", () => {
-      localStorage.removeItem(SP_URL_KEY);
-      localStorage.removeItem(SP_ANON_KEY);
-      showToast("Cleared. Reloading...");
-      setTimeout(() => window.location.reload(), 1000);
-    });
-
-    document.getElementById("omdb-form")?.addEventListener("submit", e => {
-      e.preventDefault();
-      const key = document.getElementById("omdb-key")?.value.trim();
-      if (key) {
-        localStorage.setItem(OMDB_KEY_LS, key);
-        omdbKey = key;
-        showToast("OMDb key saved.");
-      } else showToast("Enter a valid OMDb key.");
-    });
 
     document.getElementById("settings-signout")?.addEventListener("click", showSignOutModal);
     document.querySelectorAll(".auth-trigger-btn").forEach(b => b.addEventListener("click", showAuthModal));
