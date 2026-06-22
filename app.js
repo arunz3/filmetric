@@ -206,9 +206,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!spAnonKey) spAnonKey = localStorage.getItem(SP_ANON_KEY) || "";
     if (!omdbKey)   omdbKey   = localStorage.getItem(OMDB_KEY_LS) || "";
 
-    // Hardcoded fallback credentials as client-side fallback
-    if (!spUrl)     spUrl     = "https://iwivhqyfhpmsjrpiuwie.supabase.co";
-    if (!spAnonKey) spAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3aXZocXlmaHBtc2pycGl1d2llIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTc4NjkwMiwiZXhwIjoyMDk3MzYyOTAyfQ.M5YRombRPQdVT6zoWXVN9bfIKLGzxTFVc_IZ4hZ3KqI";
+    // Load from local config.js if present
+    if (window.FILMETRIC_CONFIG) {
+      if (!spUrl)     spUrl     = window.FILMETRIC_CONFIG.SUPABASE_URL || "";
+      if (!spAnonKey) spAnonKey = window.FILMETRIC_CONFIG.SUPABASE_ANON_KEY || "";
+      if (!omdbKey)   omdbKey   = window.FILMETRIC_CONFIG.OMDB_API_KEY || "";
+    }
 
     // Init Supabase client for auth
     if (spUrl && spAnonKey && window.supabase) {
