@@ -339,6 +339,66 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ── Utilities ──────────────────────────────────────────
+  function setMeta({ title, description, canonicalPath, schema }) {
+    document.title = title || "Filmetric — Find the Best Screen for Every Movie";
+    
+    const descEl = document.getElementById("meta-desc");
+    if (descEl) descEl.setAttribute("content", description || "");
+
+    const ogTitle = document.getElementById("og-title");
+    if (ogTitle) ogTitle.setAttribute("content", title || "");
+
+    const ogDesc = document.getElementById("og-desc");
+    if (ogDesc) ogDesc.setAttribute("content", description || "");
+
+    const ogUrl = document.getElementById("og-url");
+    if (ogUrl) ogUrl.setAttribute("content", `https://filmetric.com/${canonicalPath || ""}`);
+
+    const twTitle = document.getElementById("tw-title");
+    if (twTitle) twTitle.setAttribute("content", title || "");
+
+    const twDesc = document.getElementById("tw-desc");
+    if (twDesc) twDesc.setAttribute("content", description || "");
+
+    const canonLink = document.getElementById("canonical-link");
+    if (canonLink) canonLink.setAttribute("href", `https://filmetric.com/${canonicalPath || ""}`);
+
+    // Clean up old JSON-LD script tags
+    document.querySelectorAll('script[type="application/ld+json"]').forEach(s => s.remove());
+
+    // Inject dynamic schemas (WebSite and Organization default, custom route-specific schema if provided)
+    const baseSchemas = [
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Filmetric",
+        "url": "https://filmetric.com/"
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "Filmetric",
+        "url": "https://filmetric.com/",
+        "logo": "https://filmetric.com/logo.png"
+      }
+    ];
+
+    if (schema) {
+      if (Array.isArray(schema)) {
+        baseSchemas.push(...schema);
+      } else {
+        baseSchemas.push(schema);
+      }
+    }
+
+    baseSchemas.forEach(sObj => {
+      const script = document.createElement("script");
+      script.type = "application/ld+json";
+      script.text = JSON.stringify(sObj);
+      document.head.appendChild(script);
+    });
+  }
+
   function navigate(url) {
     window.history.pushState({}, "", url);
     resolveRoute();
@@ -736,23 +796,23 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="screen-card-location">${loc}</div>
           
           <div class="screen-card-specs-grid">
-            <div class="spec-item">
+            <div class="spec-item spec-format">
               <span class="spec-label">Format</span>
               <span class="spec-val">${s.format}</span>
             </div>
-            <div class="spec-item">
+            <div class="spec-item spec-projection">
               <span class="spec-label">Projection</span>
               <span class="spec-val" title="${s.projection || "—"}">${s.projection || "—"}</span>
             </div>
-            <div class="spec-item">
+            <div class="spec-item spec-aspect">
               <span class="spec-label">Aspect Ratio</span>
               <span class="spec-val">${s.aspectRatio || "—"}</span>
             </div>
-            <div class="spec-item">
+            <div class="spec-item spec-dimensions">
               <span class="spec-label">Dimensions</span>
               <span class="spec-val">${sizeStr}</span>
             </div>
-            <div class="spec-item">
+            <div class="spec-item spec-capacity">
               <span class="spec-label">Capacity</span>
               <span class="spec-val">${s.seats ? `${s.seats} seats` : "—"}</span>
             </div>
@@ -783,6 +843,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ── HOME VIEW ─────────────────────────────────────────
   function renderHomeView() {
+    setMeta({
+      title: "Filmetric — Find the Best Screen for Every Movie",
+      description: "Discover premium cinema screens. Compare IMAX, Dolby Cinema, and large format screens.",
+      canonicalPath: ""
+    });
     const screens = window.DB.allScreens;
     // Priority: Indian IMAX first, then PLF, then other
     const imax  = screens.filter(s => s._table === "indian_imax");
@@ -960,6 +1025,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderScreensView() {
+    setMeta({
+      title: "Browse Cinema Screens | Filmetric",
+      description: "Browse the database of premium movie screens, IMAX, Dolby Cinema, and PLF auditoriums across India.",
+      canonicalPath: "#/screens"
+    });
     screensPage = 1;
     const formats = getDistinctFormats();
     const chips = formats.map(f => `
@@ -1086,6 +1156,24 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    const pageTitle = `${s.name} ${s.format} | ${s.projection || s.format} Screen | Filmetric`;
+    const pageDesc = `Explore ${s.name}'s ${s.format} screen specifications, aspect ratio, projection system, screen dimensions, and seating capacity on Filmetric.`;
+    setMeta({
+      title: pageTitle,
+      description: pageDesc,
+      canonicalPath: `#/screen/${s.id}`,
+      schema: {
+        "@context": "https://schema.org",
+        "@type": "MovieTheater",
+        "name": s.name,
+        "address": {
+          "@type": "PostalAddress",
+          "addressLocality": s.city,
+          "addressCountry": s.country
+        }
+      }
+    });
+
     const loc = [s.city, s.state, s.country !== "India" ? s.country : null].filter(Boolean).join(", ");
     const statusClass = (s.status || "Open") === "Open" ? "open" : "closed";
 
@@ -1169,6 +1257,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ── NEAR ME VIEW ──────────────────────────────────────
   function renderNearMeView() {
+    setMeta({
+      title: "Best Cinema Screens Near You | Filmetric",
+      description: "Find the closest premium IMAX and Dolby Cinema screens sorted by real-time distance.",
+      canonicalPath: "#/near-me"
+    });
     renderLayout(`
       <div class="container">
         <div class="nearme-page-header">
@@ -1264,6 +1357,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ── RANKINGS VIEW ─────────────────────────────────────
   function renderRankingsView() {
+    setMeta({
+      title: "Cinema Screen Rankings | Filmetric",
+      description: "Rankings of the largest screens, most seats, and projection types across India and the world.",
+      canonicalPath: "#/rankings"
+    });
     const indianImax = window.DB.indianImax.map(r => fromIndianImax(r));
     const intlImax   = window.DB.intlImax.map(r => fromIntlImax(r));
 
@@ -1353,6 +1451,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderMoviesView() {
+    setMeta({
+      title: "Best Format for Your Movie | Filmetric",
+      description: "Search any film to discover the ideal cinema format and recommended screens.",
+      canonicalPath: "#/movies"
+    });
     const hasKey = !!omdbKey;
 
     const html = `
@@ -1389,6 +1492,24 @@ document.addEventListener("DOMContentLoaded", () => {
   function renderMovieResult(movie) {
     selectedMovie = movie;
     const rec = recommendFormat(movie);
+    
+    // SEO update for specific movie
+    setMeta({
+      title: `Best Screen for Watching ${movie.Title} | Filmetric`,
+      description: `Discover the best cinema format, projection specs, and recommended screens for watching ${movie.Title}.`,
+      canonicalPath: `#/movies?q=${encodeURIComponent(movie.Title)}`,
+      schema: {
+        "@context": "https://schema.org",
+        "@type": "Movie",
+        "name": movie.Title,
+        "dateCreated": movie.Year,
+        "director": {
+          "@type": "Person",
+          "name": movie.Director || "Unknown"
+        }
+      }
+    });
+
     const poster = (movie.Poster && movie.Poster !== "N/A") ? movie.Poster : null;
     const releaseYear = movie.Year || "—";
     
@@ -1411,7 +1532,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     el.innerHTML = `
       <div class="movie-result-card" style="margin-top:1.5rem;">
-        <div class="movie-result-header" style="display:flex;gap:1.5rem;align-items:flex-start;">
+        <div class="movie-result-header">
           ${poster ? `<img src="${poster}" alt="${movie.Title}" style="width:96px;height:144px;object-fit:cover;border-radius:var(--r-sm);flex-shrink:0;border:1px solid var(--border);">` : ""}
           <div style="flex:1;">
             <div class="movie-result-title" style="font-size:1.25rem;font-weight:600;color:var(--text);">${movie.Title} <span style="font-weight:300;color:var(--text-2);">(${releaseYear})</span></div>

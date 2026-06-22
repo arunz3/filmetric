@@ -1899,6 +1899,20 @@ button {
 }
 
 /* ── Responsive ────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .filter-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    -webkit-overflow-scrolling: touch;
+    -ms-overflow-style: none; /* IE/Edge */
+    scrollbar-width: none; /* Firefox */
+  }
+  .filter-chips::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
+}
+
 @media (max-width: 640px) {
   .hero-headline { font-size: clamp(2rem, 9vw, 3.2rem); }
   .hero-actions { flex-direction: column; align-items: stretch; }
@@ -1908,7 +1922,61 @@ button {
   .nearme-inner { grid-template-columns: 1fr; }
   .movie-preview-inner { grid-template-columns: 1fr; }
   .filter-bar { flex-direction: column; align-items: stretch; }
-  .filter-chips { overflow-x: auto; flex-wrap: nowrap; }
+}
+
+@media (max-width: 480px) {
+  .screen-card-specs-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.75rem 0.5rem !important;
+  }
+  .spec-item {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 0.15rem !important;
+  }
+  .spec-val {
+    text-align: left !important;
+    width: 100% !important;
+  }
+  .spec-format {
+    display: none !important;
+  }
+}
+
+/* Accessibility Focus States */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent, #e4d5bc);
+  outline-offset: 3px;
+}
+
+.movie-result-header {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+@media (max-width: 480px) {
+  .movie-result-header {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 1rem;
+  }
+  .nearme-screen-card {
+    gap: 0.75rem !important;
+    padding: 1rem !important;
+    flex-wrap: wrap !important;
+  }
+  .nearme-card-format {
+    width: 100% !important;
+    order: 3 !important;
+    padding-left: 28px !important;
+    margin-top: -0.25rem !important;
+  }
 }
 
 /* ── Utility ───────────────────────────────────────────── */
