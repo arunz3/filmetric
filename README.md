@@ -37,40 +37,30 @@ Filmetric is a premium, data-driven single-page application (SPA) designed for c
 
 ---
 
-## Local Setup
+## Cloudflare Pages Deployment
 
-### 1. Clone the repository
-```bash
-git clone https://github.com/arunz3/filmetric.git
-cd filmetric
-```
+Since `config.js` is ignored by Git to protect your API keys and credentials, you can dynamically generate it during the Cloudflare Pages build process using environment variables.
 
-### 2. Configure Credentials (`config.js`)
-To protect sensitive API tokens and database keys from being pushed to version control, credentials are kept in a local, git-ignored configuration file.
+### Step-by-Step Guide
 
-Create a file named `config.js` in the root directory:
+1. **Create a Cloudflare Pages Project**:
+   - Log in to your Cloudflare dashboard and navigate to **Workers & Pages** > **Create application** > **Pages** > **Connect to Git**.
+   - Select your `filmetric` repository.
 
-```javascript
-window.FILMETRIC_CONFIG = {
-  SUPABASE_URL: "https://your-project.supabase.co",
-  SUPABASE_ANON_KEY: "your-supabase-public-anon-key",
-  OMDB_API_KEY: "your-omdb-api-key"
-};
-```
+2. **Configure Build Settings**:
+   - **Framework preset**: `None`
+   - **Build command**: Copy and paste the following command to dynamically generate the config file:
+     ```bash
+     echo "window.FILMETRIC_CONFIG = { SUPABASE_URL: '${SUPABASE_URL}', SUPABASE_ANON_KEY: '${SUPABASE_ANON_KEY}', OMDB_API_KEY: '${OMDB_API_KEY}' };" > config.js
+     ```
+   - **Build output directory**: `.` (or leave empty to serve root directory files)
 
-*Note: `config.js` is included in `.gitignore` and will not be pushed to your repository.*
+3. **Configure Environment Variables**:
+   - Under the **Environment Variables** section in your Pages build settings, add the following variables:
+     * `SUPABASE_URL`: Your Supabase project URL
+     * `SUPABASE_ANON_KEY`: Your Supabase anon key
+     * `OMDB_API_KEY`: Your OMDb API Key
 
-### 3. Setup Local Environment Variables (Optional)
-If your static server supports environment routing, configure `.env` in the root:
-```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-supabase-public-anon-key
-OMDB_API_KEY=your-omdb-api-key
-```
+4. **Deploy**:
+   - Click **Save and Deploy**. Cloudflare will run the build script, inject the keys, and serve the application securely.
 
-### 4. Run the Application
-Start a local web server (e.g., using `http-server` or `live-server`):
-```bash
-npx http-server -p 5173
-```
-Open `http://localhost:5173` in your browser.
