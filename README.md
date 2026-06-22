@@ -35,32 +35,3 @@ Filmetric is a premium, data-driven single-page application (SPA) designed for c
 * **Metadata API**: OMDb API (IMDb index integration)
 * **Routing**: Hash-based client-side SPA routing (`#/screens`, `#/movies`, `#/near-me`, `#/rankings`)
 
----
-
-## Cloudflare Pages Deployment
-
-Since `config.js` is ignored by Git to protect your API keys and credentials, you can dynamically generate it during the Cloudflare Pages build process using environment variables.
-
-### Step-by-Step Guide
-
-1. **Create a Cloudflare Pages Project**:
-   - Log in to your Cloudflare dashboard and navigate to **Workers & Pages** > **Create application** > **Pages** > **Connect to Git**.
-   - Select your `filmetric` repository.
-
-2. **Configure Build Settings**:
-   - **Framework preset**: `None`
-   - **Build command**: Copy and paste the following command to dynamically generate the config file:
-     ```bash
-     echo "window.FILMETRIC_CONFIG = { SUPABASE_URL: '${SUPABASE_URL}', SUPABASE_ANON_KEY: '${SUPABASE_ANON_KEY}', OMDB_API_KEY: '${OMDB_API_KEY}' };" > config.js
-     ```
-   - **Build output directory**: `.` (or leave empty to serve root directory files)
-
-3. **Configure Environment Variables**:
-   - Under the **Environment Variables** section in your Pages build settings, add the following variables:
-     * `SUPABASE_URL`: Your Supabase project URL
-     * `SUPABASE_ANON_KEY`: Your Supabase anon key
-     * `OMDB_API_KEY`: Your OMDb API Key
-
-4. **Deploy**:
-   - Click **Save and Deploy**. Cloudflare will run the build script, inject the keys, and serve the application securely.
-
