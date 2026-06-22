@@ -98,8 +98,8 @@ document.addEventListener("DOMContentLoaded", () => {
       area:        null,
       seats:       null,
       status:      "Open",
-      lat:         null,
-      lon:         null,
+      lat:         r.lat  || null,
+      lon:         r.long || null,
       remarks:     r.remarks || null,
       image:       pickImage("PLF", hash),
     };
@@ -137,8 +137,8 @@ document.addEventListener("DOMContentLoaded", () => {
       area:        null,
       seats:       r.seats || null,
       status:      r.status || "Open",
-      lat:         null,
-      lon:         null,
+      lat:         r.lat  || null,
+      lon:         r.long || null,
       audio:       r.audio || null,
       image:       pickImage(format, hash),
     };
@@ -262,36 +262,124 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // ── Auth Layer ─────────────────────────────────────────
+  // ── Auth Layer & Context ────────────────────────────────
   let currentUser = null;
   let authCallbacks = [];
 
-  function initAuth() {
-    if (supabase) {
-      supabase.auth.getSession().then(({ data: { session } }) => handleAuthSession(session));
-      supabase.auth.onAuthStateChange((_e, session) => handleAuthSession(session));
-    } else {
-      const saved = localStorage.getItem("filmetric_session");
-      handleAuthSession(saved ? JSON.parse(saved) : null);
+  // Global Auth object configuration
+  window.Auth = {
+    user: null,
+    profile: null,
+    loading: true,
+    signIn: authSignIn,
+    signUp: authSignUp,
+    signInWithGoogle: authSignInWithGoogle,
+    signOut: authSignOut
+  };
+
+  async function getOrCreateProfile(user) {
+    if (!supabase) {
+      const mockProfiles = JSON.parse(localStorage.getItem("filmetric_mock_profiles") || "{}");
+      if (mockProfiles[user.id]) {
+        return mockProfiles[user.id];
+      }
+      const newProfile = {
+        id: user.id,
+        username: user.username || user.user_metadata?.username || user.email.split("@")[0],
+        avatar_url: user.avatarUrl || "",
+        role: "user",
+        created_at: new Date().toISOString()
+      };
+      mockProfiles[user.id] = newProfile;
+      localStorage.setItem("filmetric_mock_profiles", JSON.stringify(mockProfiles));
+      return newProfile;
+    }
+
+    try {
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (profile) return profile;
+
+      let username = user.user_metadata?.full_name || user.user_metadata?.name || user.user_metadata?.username;
+      if (!username) {
+        username = user.email.split("@")[0];
+      }
+      const avatarUrl = user.user_metadata?.avatar_url || "";
+      
+      const newProfile = {
+        id: user.id,
+        username: username,
+        avatar_url: avatarUrl,
+        role: 'user',
+        created_at: new Date().toISOString()
+      };
+
+      const { data: inserted, error: insertError } = await supabase
+        .from('profiles')
+        .insert(newProfile)
+        .select()
+        .maybeSingle();
+
+      if (insertError) {
+        console.error("Profile creation error:", insertError);
+        return newProfile;
+      }
+      return inserted || newProfile;
+    } catch (err) {
+      console.error("Profile handler exception:", err);
+      return {
+        id: user.id,
+        username: user.email.split("@")[0],
+        avatar_url: "",
+        role: "user",
+        created_at: new Date().toISOString()
+      };
     }
   }
 
-  function handleAuthSession(session) {
+  async function initAuth() {
+    window.Auth.loading = true;
+    if (supabase) {
+      const { data: { session } } = await supabase.auth.getSession();
+      await handleAuthSession(session);
+      supabase.auth.onAuthStateChange(async (_e, session) => {
+        await handleAuthSession(session);
+      });
+    } else {
+      const saved = localStorage.getItem("filmetric_session");
+      await handleAuthSession(saved ? JSON.parse(saved) : null);
+    }
+  }
+
+  async function handleAuthSession(session) {
+    window.Auth.loading = true;
     if (session) {
       const u = session.user;
-      const profiles = JSON.parse(localStorage.getItem("filmetric_profiles") || "{}");
-      const p = profiles[u.email] || {
-        username: u.user_metadata?.username || u.email.split("@")[0],
-        avatarUrl: "",
-        joinDate: u.created_at
-          ? new Date(u.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" })
+      const profile = await getOrCreateProfile(u);
+      window.Auth.user = u;
+      window.Auth.profile = profile;
+      currentUser = {
+        id: u.id,
+        email: u.email,
+        jwt: session.access_token || "",
+        username: profile.username,
+        avatarUrl: profile.avatar_url,
+        role: profile.role || 'user',
+        joinDate: profile.created_at
+          ? new Date(profile.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" })
           : "2025",
       };
-      currentUser = { id: u.id, email: u.email, jwt: session.access_token || "", ...p };
     } else {
+      window.Auth.user = null;
+      window.Auth.profile = null;
       currentUser = null;
       localStorage.removeItem("filmetric_session");
     }
+    window.Auth.loading = false;
     authCallbacks.forEach(cb => cb(currentUser));
   }
 
@@ -307,7 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
     users.push({ ...user, password });
     localStorage.setItem("filmetric_users", JSON.stringify(users));
     const session = { access_token: "mock-token", user };
-    handleAuthSession(session);
+    await handleAuthSession(session);
     localStorage.setItem("filmetric_session", JSON.stringify(session));
     return session;
   }
@@ -322,14 +410,40 @@ document.addEventListener("DOMContentLoaded", () => {
     const user = users.find(u => u.email === email && u.password === password);
     if (!user) throw new Error("Invalid email or password");
     const session = { access_token: "mock-token", user };
-    handleAuthSession(session);
+    await handleAuthSession(session);
     localStorage.setItem("filmetric_session", JSON.stringify(session));
     return session;
   }
 
+  async function authSignInWithGoogle() {
+    if (supabase) {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin + window.location.pathname
+        }
+      });
+      if (error) throw error;
+      return data;
+    } else {
+      const mockUser = {
+        id: `google-mock-${Date.now()}`,
+        email: "googleuser@example.com",
+        user_metadata: {
+          full_name: "Google Explorer",
+          avatar_url: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=80&h=80&q=80"
+        }
+      };
+      const session = { access_token: "mock-google-token", user: mockUser };
+      await handleAuthSession(session);
+      localStorage.setItem("filmetric_session", JSON.stringify(session));
+      return session;
+    }
+  }
+
   async function authSignOut() {
     if (supabase) await supabase.auth.signOut();
-    handleAuthSession(null);
+    await handleAuthSession(null);
   }
 
   function onAuthStateChange(cb) {
@@ -338,7 +452,123 @@ document.addEventListener("DOMContentLoaded", () => {
     return () => { authCallbacks = authCallbacks.filter(c => c !== cb); };
   }
 
+  // ── Database Operations & Community Helpers ─────────────
+  async function fetchTheatreReviews(theatreId) {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('theatre_ratings')
+        .select('*, profiles(username, avatar_url)')
+        .eq('theatre_id', theatreId);
+      if (error) {
+        console.error("Error fetching reviews:", error);
+        return [];
+      }
+      return data || [];
+    } else {
+      const allRatings = JSON.parse(localStorage.getItem("filmetric_theatre_ratings") || "[]");
+      const filtered = allRatings.filter(r => r.theatre_id === theatreId);
+      const profiles = JSON.parse(localStorage.getItem("filmetric_mock_profiles") || "{}");
+      return filtered.map(r => ({
+        ...r,
+        profiles: profiles[r.user_id] || { username: "Mock User", avatar_url: "" }
+      }));
+    }
+  }
+
+  async function fetchTheatrePhotos(theatreId) {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('theatre_photos')
+        .select('*')
+        .eq('theatre_id', theatreId)
+        .eq('approved', true);
+      if (error) {
+        console.error("Error fetching photos:", error);
+        return [];
+      }
+      return data || [];
+    } else {
+      const all = JSON.parse(localStorage.getItem("filmetric_theatre_photos") || "[]");
+      return all.filter(p => p.theatre_id === theatreId && p.approved === true);
+    }
+  }
+
+  async function addOrUpdateReview(theatreId, rating, reviewText) {
+    if (!currentUser) throw new Error("Authentication required");
+
+    const reviewData = {
+      user_id: currentUser.id,
+      theatre_id: theatreId,
+      rating: parseInt(rating),
+      review: reviewText,
+      created_at: new Date().toISOString()
+    };
+
+    if (supabase) {
+      const { data: existing } = await supabase
+        .from('theatre_ratings')
+        .select('id')
+        .eq('theatre_id', theatreId)
+        .eq('user_id', currentUser.id)
+        .maybeSingle();
+
+      if (existing) {
+        const { error } = await supabase
+          .from('theatre_ratings')
+          .update({ rating: reviewData.rating, review: reviewData.review })
+          .eq('id', existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('theatre_ratings')
+          .insert({
+            id: crypto.randomUUID ? crypto.randomUUID() : `r-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            ...reviewData
+          });
+        if (error) throw error;
+      }
+    } else {
+      const allRatings = JSON.parse(localStorage.getItem("filmetric_theatre_ratings") || "[]");
+      const idx = allRatings.findIndex(r => r.theatre_id === theatreId && r.user_id === currentUser.id);
+      if (idx !== -1) {
+        allRatings[idx].rating = reviewData.rating;
+        allRatings[idx].review = reviewData.review;
+      } else {
+        allRatings.push({
+          id: `mock-r-${Date.now()}`,
+          ...reviewData
+        });
+      }
+      localStorage.setItem("filmetric_theatre_ratings", JSON.stringify(allRatings));
+    }
+  }
+
+  async function deleteReview(reviewId, theatreId) {
+    if (!currentUser) throw new Error("Authentication required");
+
+    if (supabase) {
+      const { error } = await supabase
+        .from('theatre_ratings')
+        .delete()
+        .eq('id', reviewId);
+      if (error) throw error;
+    } else {
+      let allRatings = JSON.parse(localStorage.getItem("filmetric_theatre_ratings") || "[]");
+      allRatings = allRatings.filter(r => r.id !== reviewId);
+      localStorage.setItem("filmetric_theatre_ratings", JSON.stringify(allRatings));
+    }
+  }
+
   // ── Utilities ──────────────────────────────────────────
+  function escapeHtml(str) {
+    if (!str) return "";
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
   function setMeta({ title, description, canonicalPath, schema }) {
     document.title = title || "Filmetric — Find the Best Screen for Every Movie";
     
@@ -432,6 +662,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let screensFormatFilter = "";
   let screensPage = 1;
   const SCREENS_PER_PAGE = 18;
+  let selectedMovie = null;
 
   // ── OMDb API ─────────────────────────────────────────
   const OMDB_BASE = "https://www.omdbapi.com/";
@@ -562,8 +793,9 @@ document.addEventListener("DOMContentLoaded", () => {
           </button>
           <div class="user-dropdown" id="user-dropdown">
             <a href="#/profile">Profile</a>
-            <a href="#/settings">Settings</a>
-            <button id="signout-btn">Sign Out</button>
+            <a href="#/profile?tab=reviews">My Reviews</a>
+            <a href="#/profile?tab=contributions">My Contributions</a>
+            <button id="signout-btn">Logout</button>
           </div>
         </div>`;
     } else {
@@ -605,7 +837,9 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="mobile-auth-section">
             ${currentUser
               ? `<a href="#/profile" class="mobile-nav-link">Profile</a>
-                 <button class="btn btn-ghost btn-full mt-2 auth-trigger-signout">Sign Out</button>`
+                 <a href="#/profile?tab=reviews" class="mobile-nav-link">My Reviews</a>
+                 <a href="#/profile?tab=contributions" class="mobile-nav-link">My Contributions</a>
+                 <button class="btn btn-ghost btn-full mt-2 auth-trigger-signout">Logout</button>`
               : `<button class="btn btn-primary btn-full auth-trigger-btn">Login</button>`
             }
           </div>
@@ -650,8 +884,9 @@ document.addEventListener("DOMContentLoaded", () => {
               <div class="footer-col-title">Company</div>
               <div class="footer-links">
                 <a href="#/about" class="footer-link">About</a>
-                <a href="#/privacy" class="footer-link">Privacy</a>
-                <a href="#/settings" class="footer-link">Settings</a>
+                <a href="#/privacy" class="footer-link">Privacy Policy</a>
+                <a href="#/terms" class="footer-link">Terms of Service</a>
+                <a href="mailto:contact@filmetric.com" class="footer-link">Contact</a>
               </div>
             </div>
           </div>
@@ -764,6 +999,8 @@ document.addEventListener("DOMContentLoaded", () => {
       renderAboutView();
     } else if (routePath === "#/privacy") {
       renderPrivacyView();
+    } else if (routePath === "#/terms") {
+      renderTermsView();
     } else {
       renderHomeView();
     }
@@ -1040,9 +1277,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const total = window.DB.allScreens.length;
     const html = `
       <div class="container">
-        <div class="page-header">
-          <div class="page-title">Screens</div>
-          <div class="page-subtitle">${total > 0 ? `${total} screens in database` : "No data — check Settings"}</div>
+        <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem;">
+          <div>
+            <h1 class="page-title" style="margin:0;">Screens</h1>
+            <div class="page-subtitle" style="margin-top:0.25rem;">${total > 0 ? `${total} screens in database` : "No data — check Settings"}</div>
+          </div>
+          <button class="btn btn-primary btn-sm" id="submit-missing-screen-btn">Submit Missing Screen</button>
         </div>
         <div class="filter-bar">
           <input type="text" class="filter-search" id="screens-search"
@@ -1059,6 +1299,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderLayout(html, "screens");
     renderScreensList();
     attachScreensListeners();
+    document.getElementById("submit-missing-screen-btn")?.addEventListener("click", showSubmitScreenModal);
   }
 
   function getFilteredScreens() {
@@ -1203,11 +1444,12 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="detail-format-tag">${s.format}</div>
           <h1 class="detail-title">${s.name}</h1>
           <div class="detail-location">${loc}</div>
-          <div class="detail-actions">
+          <div class="detail-actions" style="display:flex; gap:0.75rem; align-items:center;">
             <div class="status-badge ${statusClass}">
               <span class="status-dot"></span>
               ${s.status || "Open"}
             </div>
+            <div id="theatre-rating-summary-badge" class="status-badge" style="border-color:var(--border); color:var(--text-2); display:none;"></div>
           </div>
         </div>
 
@@ -1217,7 +1459,8 @@ document.addEventListener("DOMContentLoaded", () => {
               <div class="detail-format-badge">${s.format}</div>
               <div class="detail-format-sub">${s.projection || "Premium Cinema Technology"}</div>
             </div>
-            <div class="specs-card">
+            
+            <div class="specs-card" style="margin-bottom:1.5rem;">
               <div class="specs-card-header">
                 <div class="specs-card-title">Technical Specifications</div>
               </div>
@@ -1227,7 +1470,28 @@ document.addEventListener("DOMContentLoaded", () => {
                   <span class="spec-val">${v}</span>
                 </div>`).join("")}
             </div>
+
+            <!-- Photos Gallery -->
+            <div id="detail-photos-gallery" style="margin-bottom:1.5rem; display:none;">
+              <div class="specs-card">
+                <div class="specs-card-header"><div class="specs-card-title">User Uploaded Photos</div></div>
+                <div style="padding:1.5rem; display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:1rem;" id="detail-photos-list"></div>
+              </div>
+            </div>
+
+            <!-- Reviews and Ratings Section -->
+            <div class="specs-card">
+              <div class="specs-card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <div class="specs-card-title">User Reviews</div>
+                <span id="detail-average-rating" style="font-size:0.75rem; font-family:'JetBrains Mono', monospace; text-transform:uppercase; color:var(--cream);">Loading reviews...</span>
+              </div>
+              <div style="padding:1.5rem;">
+                <div id="user-review-form-container" style="margin-bottom:1.5rem; padding-bottom:1.5rem; border-bottom:1px solid var(--border);"></div>
+                <div id="detail-reviews-list" style="display:flex; flex-direction:column; gap:1.25rem;"></div>
+              </div>
+            </div>
           </div>
+
           <div>
             <div class="specs-card" style="margin-bottom:1rem;">
               <div class="specs-card-header">
@@ -1241,18 +1505,232 @@ document.addEventListener("DOMContentLoaded", () => {
               ${s.lat ? `<div class="spec-row"><span class="spec-key">Coordinates</span><span class="spec-val t-mono" style="font-size:0.7rem;">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</span></div>` : ""}
             </div>
             ${s.lat ? `
-              <a href="https://maps.google.com/?q=${s.lat},${s.lon}" target="_blank" class="btn btn-ghost btn-full mb-2">
+              <div id="detail-map" class="mini-map-preview"></div>
+              <a href="https://www.google.com/maps?q=${s.lat},${s.lon}" target="_blank" class="btn btn-ghost btn-full mb-2">
                 Open in Maps
               </a>` : ""}
             <a href="#/near-me" class="btn btn-ghost btn-full mb-2">Find Similar Near Me</a>
-            <a href="#/screens?q=${encodeURIComponent(s.format.split(" ")[0])}" class="btn btn-ghost btn-full">
-              More ${s.format.split(" ")[0]} Screens
+            <a href="#/screens?q=${encodeURIComponent(s.format.split(" ")[0])}" class="btn btn-ghost btn-full mb-2">
+              More Similar Screens
             </a>
+            <button id="detail-submit-photo-btn" class="btn btn-ghost btn-full mb-2">Upload Theatre Photo</button>
+            <button id="detail-submit-correction-btn" class="btn btn-ghost btn-full mb-3">Submit Correction</button>
+            
+            ${s.lat ? `
+              <div class="specs-card" style="margin-top:1.5rem;">
+                <div class="specs-card-header">
+                  <div class="specs-card-title">Nearby Premium Screens</div>
+                </div>
+                <div id="nearby-screens-list"></div>
+              </div>` : ""}
           </div>
         </div>
       </div>`;
 
     renderLayout(html, "screens");
+
+    // Load Leaflet map and populate nearby screens dynamically after content is loaded
+    if (s.lat && s.lon) {
+      setTimeout(() => {
+        const mapContainer = document.getElementById("detail-map");
+        if (!mapContainer) return;
+
+        // Initialize Leaflet map
+        const map = L.map('detail-map', {
+          zoomControl: false,
+          attributionControl: false,
+          scrollWheelZoom: false,
+          dragging: !L.Browser.mobile,
+          touchZoom: true
+        }).setView([s.lat, s.lon], 13);
+
+        // Add CartoDB Dark Matter tile layer
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          maxZoom: 20
+        }).addTo(map);
+
+        // Add custom icon matching branding
+        const customIcon = L.divIcon({
+          className: 'custom-map-marker',
+          html: '<div class="marker-pin"></div>',
+          iconSize: [24, 24],
+          iconAnchor: [12, 12]
+        });
+
+        // Popup content layout
+        const popupHtml = `
+          <div style="font-family:'DM Sans', sans-serif; color:var(--text); font-size:0.8rem; line-height:1.4;">
+            <div style="font-weight:600; color:#fff; margin-bottom:2px;">${s.name}</div>
+            <div style="color:var(--text-2); font-size:0.75rem; margin-bottom:2px;">${s.city}</div>
+            <div style="color:var(--cream); font-family:'JetBrains Mono', monospace; font-size:0.65rem; text-transform:uppercase; font-weight:500; letter-spacing:0.05em;">${s.format}</div>
+          </div>
+        `;
+
+        // Add marker
+        L.marker([s.lat, s.lon], { icon: customIcon }).addTo(map).bindPopup(popupHtml);
+
+        // Calculate 3 nearest screens (excluding current screen)
+        const allOther = window.DB.allScreens || [];
+        const geocoded = allOther
+          .filter(sc => sc.lat && sc.lon && sc.id !== s.id)
+          .map(sc => ({
+            ...sc,
+            dist: haversine(s.lat, s.lon, sc.lat, sc.lon)
+          }))
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, 3);
+
+        const listEl = document.getElementById("nearby-screens-list");
+        if (listEl) {
+          if (geocoded.length === 0) {
+            listEl.innerHTML = `<div style="padding:1rem 1.5rem; font-size:0.8rem; color:var(--text-3);">No premium screens nearby.</div>`;
+          } else {
+            listEl.innerHTML = geocoded.map(sc => {
+              const distStr = sc.dist < 1 ? `${Math.round(sc.dist * 1000)} m` : `${sc.dist.toFixed(1)} km`;
+              return `
+                <a href="#/screen/${sc.id}" class="spec-row" style="display:flex; justify-content:space-between; align-items:center; text-decoration:none; color:inherit; transition:background var(--t) var(--ease);">
+                  <div style="text-align:left;">
+                    <div style="font-size:0.85rem; font-weight:500; color:var(--text);">${sc.name}</div>
+                    <div style="font-size:0.7rem; color:var(--text-2); margin-top:2px;">${distStr} &middot; ${sc.city}</div>
+                  </div>
+                  <span style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:var(--text-3); text-transform:uppercase; letter-spacing:0.05em;">${sc.format}</span>
+                </a>`;
+            }).join("");
+          }
+        }
+      }, 50);
+    }
+
+    // Dynamic loading of reviews and photos
+    fetchTheatreReviews(s.id).then(reviews => {
+      const count = reviews.length;
+      const sum = reviews.reduce((acc, curr) => acc + curr.rating, 0);
+      const avg = count > 0 ? (sum / count).toFixed(1) : 0;
+      
+      const badge = document.getElementById("theatre-rating-summary-badge");
+      if (badge && count > 0) {
+        badge.innerHTML = `⭐ ${avg} (${count} review${count > 1 ? "s" : ""})`;
+        badge.style.display = "inline-flex";
+      }
+
+      const avgText = document.getElementById("detail-average-rating");
+      if (avgText) {
+        avgText.textContent = count > 0 ? `★ ${avg}/5 (${count} review${count > 1 ? "s" : ""})` : "No reviews yet";
+      }
+
+      const reviewsList = document.getElementById("detail-reviews-list");
+      if (reviewsList) {
+        if (reviews.length === 0) {
+          reviewsList.innerHTML = `<p style="font-size:0.85rem; color:var(--text-3); text-align:center; padding:1rem 0;">Be the first to review this screen!</p>`;
+        } else {
+          reviewsList.innerHTML = reviews.map(r => {
+            const stars = "★".repeat(r.rating) + "☆".repeat(5 - r.rating);
+            const userAvatar = r.profiles?.avatar_url 
+              ? `<img src="${r.profiles.avatar_url}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;">`
+              : (r.profiles?.username || "?").substring(0,2).toUpperCase();
+            
+            const isOwnReview = currentUser && r.user_id === currentUser.id;
+            const isAdmin = currentUser && currentUser.role === 'admin';
+            const deleteBtn = (isOwnReview || isAdmin) 
+              ? `<button class="btn btn-ghost delete-review-btn" data-review-id="${r.id}" style="padding:2px 8px; font-size:0.65rem; color:#FF7B72; border-color:rgba(255,123,114,0.15); margin-left:auto;">Delete</button>` 
+              : '';
+
+            return `
+              <div style="display:flex; gap:1rem; align-items:flex-start;">
+                <div style="width:32px; height:32px; background:var(--surface-3); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:600; color:var(--cream); overflow:hidden; border:1px solid var(--border); flex-shrink:0;">${userAvatar}</div>
+                <div style="flex:1;">
+                  <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span style="font-size:0.85rem; font-weight:600; color:var(--text);">${r.profiles?.username || "Anonymous"}</span>
+                    <span style="font-size:0.75rem; color:var(--cream); letter-spacing:-1px;">${stars}</span>
+                    ${deleteBtn}
+                  </div>
+                  <p style="font-size:0.8rem; color:var(--text-2); line-height:1.5; margin-top:4px;">${r.review || ""}</p>
+                  <div style="font-size:0.65rem; color:var(--text-3); margin-top:4px;">${new Date(r.created_at).toLocaleDateString()}</div>
+                </div>
+              </div>
+            `;
+          }).join("");
+
+          reviewsList.querySelectorAll(".delete-review-btn").forEach(btn => {
+            btn.addEventListener("click", async () => {
+              if (confirm("Are you sure you want to delete this review?")) {
+                try {
+                  await deleteReview(btn.dataset.reviewId, s.id);
+                  showToast("Review deleted.");
+                  resolveRoute();
+                } catch (e) {
+                  showToast("Failed to delete review: " + e.message);
+                }
+              }
+            });
+          });
+        }
+      }
+
+      const formContainer = document.getElementById("user-review-form-container");
+      if (formContainer) {
+        if (!currentUser) {
+          formContainer.innerHTML = `
+            <div style="text-align:center; padding:0.5rem 0;">
+              <p style="font-size:0.8rem; color:var(--text-2); margin-bottom:0.75rem;">Sign in to leave a rating and review.</p>
+              <button class="btn btn-ghost btn-sm auth-trigger-btn">Login / Sign Up</button>
+            </div>`;
+          formContainer.querySelector(".auth-trigger-btn")?.addEventListener("click", showAuthModal);
+        } else {
+          const ownReview = reviews.find(r => r.user_id === currentUser.id);
+          formContainer.innerHTML = `
+            <div style="display:flex; flex-direction:column; gap:0.75rem;">
+              <div style="font-size:0.85rem; font-weight:600; color:var(--text);">${ownReview ? "Update your review" : "Write a review"}</div>
+              <div style="display:flex; gap:0.5rem; align-items:center;">
+                <span style="font-size:0.75rem; color:var(--text-2);">Rating:</span>
+                <select id="user-rating-select" class="form-input" style="width:auto; padding:0.25rem 0.5rem; font-size:0.8rem;">
+                  <option value="5" ${ownReview?.rating === 5 ? "selected" : ""}>⭐⭐⭐⭐⭐ (5/5)</option>
+                  <option value="4" ${ownReview?.rating === 4 ? "selected" : ""}>⭐⭐⭐⭐ (4/5)</option>
+                  <option value="3" ${ownReview?.rating === 3 ? "selected" : ""}>⭐⭐⭐ (3/5)</option>
+                  <option value="2" ${ownReview?.rating === 2 ? "selected" : ""}>⭐⭐ (2/5)</option>
+                  <option value="1" ${ownReview?.rating === 1 ? "selected" : ""}>⭐ (1/5)</option>
+                </select>
+              </div>
+              <textarea id="user-review-text" class="form-input" style="height:64px; font-size:0.8rem; padding:0.5rem; resize:none;" placeholder="Write your thoughts about this screen (optional)...">${ownReview?.review || ""}</textarea>
+              <div style="display:flex; justify-content:flex-end;">
+                <button id="submit-review-btn" class="btn btn-primary btn-sm">${ownReview ? "Update" : "Submit"}</button>
+              </div>
+            </div>`;
+
+          document.getElementById("submit-review-btn")?.addEventListener("click", async () => {
+            const rating = parseInt(document.getElementById("user-rating-select").value);
+            const text = document.getElementById("user-review-text").value.trim();
+            try {
+              await addOrUpdateReview(s.id, rating, text);
+              showToast(ownReview ? "Review updated." : "Review submitted.");
+              resolveRoute();
+            } catch (e) {
+              showToast("Failed to submit review: " + e.message);
+            }
+          });
+        }
+      }
+    });
+
+    fetchTheatrePhotos(s.id).then(photos => {
+      if (photos.length > 0) {
+        const list = document.getElementById("detail-photos-list");
+        if (list) {
+          list.innerHTML = photos.map(p => `
+            <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border); aspect-ratio:16/9; background:#000;">
+              <img src="${p.image_url}" style="width:100%; height:100%; object-fit:cover; cursor:pointer;" alt="Theatre Photo" onclick="window.open('${p.image_url}', '_blank')">
+            </div>`).join("");
+          document.getElementById("detail-photos-gallery").style.display = "block";
+        }
+      }
+    });
+
+    document.getElementById("detail-submit-photo-btn")?.addEventListener("click", () => {
+      showUploadPhotoModal(s.id);
+    });
+    document.getElementById("detail-submit-correction-btn")?.addEventListener("click", () => {
+      showCorrectionModal(s.id);
+    });
   }
 
   // ── NEAR ME VIEW ──────────────────────────────────────
@@ -1627,7 +2105,97 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // ── PROFILE VIEW ──────────────────────────────────────
+  // ── PROFILE VIEW & CONTRIBUTIONS ──────────────────────
+  async function fetchUserContributions(userId) {
+    if (supabase) {
+      const [reviewsRes, photosRes, correctionsRes, submissionsRes] = await Promise.all([
+        supabase.from('theatre_ratings').select('*').eq('user_id', userId),
+        supabase.from('theatre_photos').select('*').eq('user_id', userId),
+        supabase.from('corrections').select('*').eq('user_id', userId),
+        supabase.from('screen_submissions').select('*').eq('user_id', userId)
+      ]);
+      return {
+        reviews: reviewsRes.data || [],
+        photos: photosRes.data || [],
+        corrections: correctionsRes.data || [],
+        submissions: submissionsRes.data || []
+      };
+    } else {
+      const ratings = JSON.parse(localStorage.getItem("filmetric_theatre_ratings") || "[]").filter(r => r.user_id === userId);
+      const photos = JSON.parse(localStorage.getItem("filmetric_theatre_photos") || "[]").filter(p => p.user_id === userId);
+      const corrections = JSON.parse(localStorage.getItem("filmetric_corrections") || "[]").filter(c => c.user_id === userId);
+      const submissions = JSON.parse(localStorage.getItem("filmetric_screen_submissions") || "[]").filter(s => s.user_id === userId);
+      return {
+        reviews: ratings,
+        photos: photos,
+        corrections: corrections,
+        submissions: submissions
+      };
+    }
+  }
+
+  function getTheatreName(theatreId) {
+    const intl = window.DB.intlImax.map(r => fromIntlImax(r));
+    const all  = [...window.DB.allScreens, ...intl];
+    const s = all.find(sc => sc.id === theatreId);
+    return s ? `${s.name} (${s.city})` : `Theatre #${theatreId}`;
+  }
+
+  function showEditReviewModal(reviewId, theatreId, currentRating, currentReview) {
+    const el = document.createElement("div");
+    el.className = "modal-backdrop";
+    el.innerHTML = `
+      <div class="modal" style="max-width:380px;">
+        <div class="modal-header">
+          <div class="modal-title">Edit Review</div>
+          <button class="icon-btn" id="edit-review-close">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div style="padding:1.5rem; display:flex; flex-direction:column; gap:0.75rem;">
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <span style="font-size:0.75rem; color:var(--text-2);">Rating:</span>
+            <select id="edit-rating-select" class="form-input" style="width:auto; padding:0.25rem 0.5rem; font-size:0.8rem;">
+              <option value="5" ${currentRating === 5 ? "selected" : ""}>⭐⭐⭐⭐⭐ (5/5)</option>
+              <option value="4" ${currentRating === 4 ? "selected" : ""}>⭐⭐⭐⭐ (4/5)</option>
+              <option value="3" ${currentRating === 3 ? "selected" : ""}>⭐⭐⭐ (3/5)</option>
+              <option value="2" ${currentRating === 2 ? "selected" : ""}>⭐⭐ (2/5)</option>
+              <option value="1" ${currentRating === 1 ? "selected" : ""}>⭐ (1/5)</option>
+            </select>
+          </div>
+          <textarea id="edit-review-text" class="form-input" style="height:64px; font-size:0.8rem; padding:0.5rem; resize:none;" placeholder="Write your thoughts about this screen (optional)...">${escapeHtml(currentReview || "")}</textarea>
+          <div id="edit-review-error" class="form-error" style="color:#FF7B72; font-size:0.75rem; min-height:1rem;"></div>
+          <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.5rem;">
+            <button id="edit-review-cancel" class="btn btn-ghost btn-sm">Cancel</button>
+            <button id="edit-review-submit-btn" class="btn btn-primary btn-sm">Save Changes</button>
+          </div>
+        </div>
+      </div>`;
+
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("open"));
+    const close = () => { el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
+    
+    document.getElementById("edit-review-close")?.addEventListener("click", close);
+    document.getElementById("edit-review-cancel")?.addEventListener("click", close);
+
+    document.getElementById("edit-review-submit-btn")?.addEventListener("click", async () => {
+      const rating = parseInt(document.getElementById("edit-rating-select").value);
+      const text = document.getElementById("edit-review-text").value.trim();
+      const errEl = document.getElementById("edit-review-error");
+      try {
+        await addOrUpdateReview(theatreId, rating, text);
+        showToast("Review updated successfully!");
+        close();
+        renderProfileView();
+      } catch (e) {
+        errEl.textContent = e.message || "Failed to update review.";
+      }
+    });
+  }
+
   function renderProfileView() {
     if (!currentUser) {
       renderLayout(`
@@ -1640,6 +2208,12 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(".auth-trigger-btn").forEach(b => b.addEventListener("click", showAuthModal));
       return;
     }
+
+    const hash = window.location.hash || "#/";
+    const qi = hash.indexOf("?");
+    const qp = qi !== -1 ? new URLSearchParams(hash.substring(qi)) : new URLSearchParams();
+    const activeTab = qp.get("tab") || "reviews";
+
     const initials = (currentUser.username || "?").substring(0, 2).toUpperCase();
     const avatar = currentUser.avatarUrl
       ? `<img src="${currentUser.avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
@@ -1647,20 +2221,193 @@ document.addEventListener("DOMContentLoaded", () => {
 
     renderLayout(`
       <div class="container profile-page">
-        <div class="profile-header">
-          <div class="profile-avatar">${avatar}</div>
-          <div>
-            <div class="profile-username">${currentUser.username}</div>
-            <div class="profile-join">Member since ${currentUser.joinDate || "2025"}</div>
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 2rem; margin-bottom: 2rem;">
+          <div class="profile-header" style="border:none; margin:0; padding:0;">
+            <div class="profile-avatar">${avatar}</div>
+            <div>
+              <div class="profile-username">${currentUser.username}</div>
+              <div class="profile-join">Member since ${currentUser.joinDate || "June 2026"}</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:0.75rem;">
+            <button class="btn btn-ghost btn-sm" id="profile-edit-btn">Edit Profile</button>
+            <button class="btn btn-ghost btn-sm" id="profile-signout">Sign Out</button>
           </div>
         </div>
-        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
-          <a href="#/settings" class="btn btn-ghost btn-sm">Settings</a>
-          <button class="btn btn-ghost btn-sm" id="profile-signout">Sign Out</button>
+
+        <div class="stats-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:1rem; margin-bottom:2rem;" id="profile-stats-container">
+          <div class="specs-card" style="padding:1.25rem; text-align:center;">
+            <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-family:'JetBrains Mono', monospace; margin-bottom:0.25rem;">Reviews</div>
+            <div style="font-size:1.8rem; font-weight:600; color:var(--text);" id="stats-reviews-count">0</div>
+          </div>
+          <div class="specs-card" style="padding:1.25rem; text-align:center;">
+            <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-family:'JetBrains Mono', monospace; margin-bottom:0.25rem;">Photos</div>
+            <div style="font-size:1.8rem; font-weight:600; color:var(--text);" id="stats-photos-count">0</div>
+          </div>
+          <div class="specs-card" style="padding:1.25rem; text-align:center;">
+            <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-family:'JetBrains Mono', monospace; margin-bottom:0.25rem;">Corrections</div>
+            <div style="font-size:1.8rem; font-weight:600; color:var(--text);" id="stats-corrections-count">0</div>
+          </div>
+          <div class="specs-card" style="padding:1.25rem; text-align:center;">
+            <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-family:'JetBrains Mono', monospace; margin-bottom:0.25rem;">Submissions</div>
+            <div style="font-size:1.8rem; font-weight:600; color:var(--text);" id="stats-submissions-count">0</div>
+          </div>
         </div>
-      </div>`);
+
+        <div class="modal-tabs" style="margin-bottom:2rem;">
+          <a href="#/profile?tab=reviews" class="modal-tab ${activeTab === 'reviews' ? 'active' : ''}" style="text-decoration:none; text-align:center; display:block; padding:0.75rem 0;">Reviews</a>
+          <a href="#/profile?tab=contributions" class="modal-tab ${activeTab === 'contributions' ? 'active' : ''}" style="text-decoration:none; text-align:center; display:block; padding:0.75rem 0;">Photos & Corrections</a>
+          <a href="#/profile?tab=submissions" class="modal-tab ${activeTab === 'submissions' ? 'active' : ''}" style="text-decoration:none; text-align:center; display:block; padding:0.75rem 0;">Missing Screens</a>
+        </div>
+
+        <div id="profile-tab-content">
+          <p style="text-align:center; color:var(--text-3); padding:3rem 0; font-size:0.9rem;">Loading contributions...</p>
+        </div>
+      </div>
+    `);
 
     document.getElementById("profile-signout")?.addEventListener("click", showSignOutModal);
+    document.getElementById("profile-edit-btn")?.addEventListener("click", showEditProfileModal);
+
+    fetchUserContributions(currentUser.id).then(data => {
+      const reviewsCount = document.getElementById("stats-reviews-count");
+      const photosCount = document.getElementById("stats-photos-count");
+      const correctionsCount = document.getElementById("stats-corrections-count");
+      const submissionsCount = document.getElementById("stats-submissions-count");
+
+      if (reviewsCount) reviewsCount.textContent = data.reviews.length;
+      if (photosCount) photosCount.textContent = data.photos.length;
+      if (correctionsCount) correctionsCount.textContent = data.corrections.length;
+      if (submissionsCount) submissionsCount.textContent = data.submissions.length;
+
+      const contentEl = document.getElementById("profile-tab-content");
+      if (!contentEl) return;
+
+      if (activeTab === "reviews") {
+        if (data.reviews.length === 0) {
+          contentEl.innerHTML = `
+            <div style="text-align:center; padding:3rem 1.5rem; color:var(--text-3); font-size:0.875rem;">
+              You have not submitted any reviews yet.
+            </div>`;
+        } else {
+          contentEl.innerHTML = `
+            <div style="display:flex; flex-direction:column; gap:1.5rem;">
+              ${data.reviews.map(r => {
+                const stars = "★".repeat(r.rating) + "☆".repeat(5 - r.rating);
+                return `
+                  <div class="specs-card" style="padding:1.5rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem;">
+                      <div>
+                        <a href="#/screen/${r.theatre_id}" style="font-size:1rem; font-weight:600; color:var(--text); text-decoration:none; transition:color var(--t) var(--ease);">${getTheatreName(r.theatre_id)}</a>
+                        <div style="font-size:0.75rem; color:var(--cream); margin-top:2px;">${stars}</div>
+                      </div>
+                      <div style="display:flex; gap:0.5rem;">
+                        <button class="btn btn-ghost btn-sm edit-review-action" data-review-id="${r.id}" data-theatre-id="${r.theatre_id}" data-rating="${r.rating}" data-review="${escapeHtml(r.review || '')}">Edit</button>
+                        <button class="btn btn-ghost btn-sm delete-review-action" data-review-id="${r.id}" data-theatre-id="${r.theatre_id}" style="color:#FF7B72; border-color:rgba(255,123,114,0.15);">Delete</button>
+                      </div>
+                    </div>
+                    <p style="font-size:0.85rem; color:var(--text-2); line-height:1.5;">${escapeHtml(r.review || "No written review text.")}</p>
+                    <div style="font-size:0.65rem; color:var(--text-3); margin-top:0.75rem;">Reviewed on ${new Date(r.created_at).toLocaleDateString()}</div>
+                  </div>`;
+              }).join("")}
+            </div>`;
+
+          contentEl.querySelectorAll(".delete-review-action").forEach(btn => {
+            btn.addEventListener("click", async () => {
+              if (confirm("Are you sure you want to delete this review?")) {
+                try {
+                  await deleteReview(btn.dataset.reviewId, btn.dataset.theatreId);
+                  showToast("Review deleted.");
+                  renderProfileView();
+                } catch (e) {
+                  showToast("Failed to delete review: " + e.message);
+                }
+              }
+            });
+          });
+
+          contentEl.querySelectorAll(".edit-review-action").forEach(btn => {
+            btn.addEventListener("click", () => {
+              const rId = btn.dataset.reviewId;
+              const tId = btn.dataset.theatreId;
+              const oldRating = parseInt(btn.dataset.rating);
+              const oldReview = btn.dataset.review;
+              showEditReviewModal(rId, tId, oldRating, oldReview);
+            });
+          });
+        }
+      } else if (activeTab === "contributions") {
+        const photoSection = `
+          <div class="specs-card" style="margin-bottom:2rem;">
+            <div class="specs-card-header"><div class="specs-card-title">Submitted Photos</div></div>
+            <div style="padding:1.5rem;">
+              ${data.photos.length === 0 ? `
+                <p style="font-size:0.85rem; color:var(--text-3); text-align:center;">No photos submitted yet.</p>
+              ` : `
+                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:1rem;">
+                  ${data.photos.map(p => `
+                    <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border); background:#000; position:relative;">
+                      <img src="${p.image_url}" style="width:100%; height:120px; object-fit:cover; display:block; cursor:pointer;" onclick="window.open('${p.image_url}', '_blank')">
+                      <div style="padding:0.5rem; font-size:0.75rem; display:flex; justify-content:space-between; align-items:center; background:var(--surface);">
+                        <a href="#/screen/${p.theatre_id}" style="color:var(--text-2); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%;">Screen Info</a>
+                        <span style="font-size:0.65rem; padding:1px 6px; border-radius:3px; font-weight:500; text-transform:uppercase; ${p.approved ? 'color:#7EE787; background:rgba(126,231,135,0.1);' : 'color:#D2A8FF; background:rgba(210,168,255,0.1);'}">${p.approved ? 'Approved' : 'Pending'}</span>
+                      </div>
+                    </div>`).join("")}
+                </div>
+              `}
+            </div>
+          </div>`;
+
+        const correctionSection = `
+          <div class="specs-card">
+            <div class="specs-card-header"><div class="specs-card-title">Submitted Corrections</div></div>
+            <div style="padding:1.5rem;">
+              ${data.corrections.length === 0 ? `
+                <p style="font-size:0.85rem; color:var(--text-3); text-align:center;">No corrections submitted yet.</p>
+              ` : `
+                <div style="display:flex; flex-direction:column; gap:1rem;">
+                  ${data.corrections.map(c => `
+                    <div class="spec-row" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; padding-bottom:1rem; border-bottom:1px solid var(--border); margin:0;">
+                      <div style="text-align:left;">
+                        <div style="font-size:0.85rem; font-weight:600;"><a href="#/screen/${c.theatre_id}" style="color:inherit; text-decoration:none;">${getTheatreName(c.theatre_id)}</a></div>
+                        <div style="font-size:0.75rem; color:var(--text-2); margin-top:2px;">Field: <span style="color:var(--cream);">${c.field_name}</span> &middot; Proposed: "${c.proposed_value}"</div>
+                        ${c.comment ? `<div style="font-size:0.75rem; color:var(--text-3); font-style:italic; margin-top:4px;">"${escapeHtml(c.comment)}"</div>` : ''}
+                      </div>
+                      <span style="font-size:0.65rem; padding:2px 8px; border-radius:3px; font-weight:500; text-transform:uppercase; ${c.status === 'Approved' ? 'color:#7EE787; background:rgba(126,231,135,0.1);' : c.status === 'Rejected' ? 'color:#FF7B72; background:rgba(255,123,114,0.1);' : 'color:#D2A8FF; background:rgba(210,168,255,0.1);'}">${c.status}</span>
+                    </div>`).join("")}
+                </div>
+              `}
+            </div>
+          </div>`;
+
+        contentEl.innerHTML = photoSection + correctionSection;
+      } else if (activeTab === "submissions") {
+        if (data.submissions.length === 0) {
+          contentEl.innerHTML = `
+            <div style="text-align:center; padding:3rem 1.5rem; color:var(--text-3); font-size:0.875rem;">
+              You have not submitted any missing screens yet.
+            </div>`;
+        } else {
+          contentEl.innerHTML = `
+            <div class="specs-card">
+              <div class="specs-card-header"><div class="specs-card-title">Missing Screen Submissions</div></div>
+              <div style="padding:1.5rem;">
+                <div style="display:flex; flex-direction:column; gap:1rem;">
+                  ${data.submissions.map(s => `
+                    <div class="spec-row" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; padding-bottom:1rem; border-bottom:1px solid var(--border); margin:0;">
+                      <div style="text-align:left;">
+                        <div style="font-size:0.85rem; font-weight:600; color:var(--text);">${s.theatre_name}</div>
+                        <div style="font-size:0.75rem; color:var(--text-2); margin-top:2px;">City: ${s.city} &middot; Format: ${s.format} &middot; Projection: ${s.projection || 'Unknown'}</div>
+                        <div style="font-size:0.65rem; color:var(--text-3); margin-top:4px;">Submitted on ${new Date(s.created_at).toLocaleDateString()}</div>
+                      </div>
+                      <span style="font-size:0.65rem; padding:2px 8px; border-radius:3px; font-weight:500; text-transform:uppercase; ${s.status === 'Approved' ? 'color:#7EE787; background:rgba(126,231,135,0.1);' : s.status === 'Rejected' ? 'color:#FF7B72; background:rgba(255,123,114,0.1);' : 'color:#D2A8FF; background:rgba(210,168,255,0.1);'}">${s.status}</span>
+                    </div>`).join("")}
+                </div>
+              </div>
+            </div>`;
+        }
+      }
+    });
   }
 
   // ── SETTINGS VIEW ─────────────────────────────────────
@@ -1695,7 +2442,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ── ABOUT VIEW ────────────────────────────────────────
   function renderAboutView() {
-    const total = window.DB.allScreens.length + window.DB.intlImax.length;
     renderLayout(`
       <div class="container" style="max-width:680px;padding:5rem var(--gutter);">
         <div class="section-label" style="margin-bottom:1.5rem;">About</div>
@@ -1703,35 +2449,185 @@ document.addEventListener("DOMContentLoaded", () => {
           Find the Best Screen<br>for Every Movie.
         </h1>
         <p style="font-size:0.95rem;color:var(--text-2);line-height:1.8;margin-bottom:1.5rem;">
-          Filmetric is a cinema discovery platform for people who care about how they watch films. ${total > 0 ? `We currently track ${total} premium cinema screens.` : ""}
+          Filmetric is a cinema discovery platform built for movie enthusiasts who care about the theatrical experience.
         </p>
         <p style="font-size:0.95rem;color:var(--text-2);line-height:1.8;margin-bottom:1.5rem;">
-          We track IMAX, Dolby Cinema, Premium Large Format screens, and more — giving you the technical
-          specifications to make an informed choice before you buy your ticket.
+          We catalog premium cinema screens across India and around the world, including IMAX, Dolby Cinema, PLF, EPIQ, ScreenX, Samsung Onyx, and other advanced exhibition formats.
         </p>
-        <p style="font-size:0.95rem;color:var(--text-2);line-height:1.8;">
-          Filmetric is an independent project. Data is sourced from theatre operators and community contributions.
+        <p style="font-size:0.95rem;color:var(--text-2);line-height:1.8;margin-bottom:1.5rem;">
+          Our mission is to help moviegoers make informed decisions about where to watch a film by providing technical screen specifications, projection details, aspect ratios, rankings, and format comparisons.
+        </p>
+        <p style="font-size:0.95rem;color:var(--text-2);line-height:1.8;margin-bottom:2.5rem;">
+          Filmetric combines technical cinema data with community-driven insights to create a reliable resource for discovering exceptional movie experiences.
+        </p>
+        <p style="font-size:0.8rem;color:var(--text-3);line-height:1.6;border-top:1px solid var(--border);padding-top:1.5rem;">
+          Filmetric is an independent project and is not affiliated with IMAX Corporation, Dolby Laboratories, PVR INOX, Cinepolis, or any theatre chain unless explicitly stated.
         </p>
       </div>`);
   }
 
   // ── PRIVACY VIEW ──────────────────────────────────────
   function renderPrivacyView() {
+    setMeta({
+      title: "Privacy Policy | Filmetric",
+      description: "Read the Privacy Policy for the Filmetric cinema discovery platform.",
+      canonicalPath: "#/privacy"
+    });
     renderLayout(`
       <div class="container" style="max-width:680px;padding:5rem var(--gutter);">
         <div class="section-label" style="margin-bottom:1.5rem;">Legal</div>
-        <h1 class="page-title" style="margin-bottom:2rem;">Privacy Policy</h1>
-        <p style="font-size:0.875rem;color:var(--text-2);line-height:1.8;margin-bottom:1.5rem;">
-          Filmetric collects minimal data. We use browser localStorage for preferences and settings.
-          No personal data is sold or shared with third parties.
-        </p>
-        <p style="font-size:0.875rem;color:var(--text-2);line-height:1.8;">
-          If you create an account, your email and username are stored securely via Supabase.
-          You can delete your account at any time from Settings.
-        </p>
+        <h1 class="page-title" style="margin-bottom:0.5rem;font-size:2.2rem;font-weight:600;color:var(--cream);">Privacy Policy</h1>
+        <div style="font-size:0.75rem;font-family:'JetBrains Mono',monospace;text-transform:uppercase;color:var(--text-3);letter-spacing:0.05em;margin-bottom:3rem;">Last Updated: June 2026</div>
+
+        <div style="display:flex;flex-direction:column;gap:2.5rem;">
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Information We Collect</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;margin-bottom:0.75rem;">We may collect:</p>
+            <ul style="font-size:0.875rem;color:var(--text-2);line-height:1.8;padding-left:1.25rem;list-style-type:disc;">
+              <li>Email address</li>
+              <li>Username</li>
+              <li>Profile image (when provided through sign-in providers)</li>
+              <li>Reviews, ratings, photos, and submissions made on the platform</li>
+            </ul>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Location Information</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              If users choose to enable location access, Filmetric may use location data to help discover nearby cinema screens and improve location-based features. Location information is used only for platform functionality.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Cookies and Local Storage</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;margin-bottom:0.75rem;">Filmetric may use cookies, browser storage, and similar technologies to:</p>
+            <ul style="font-size:0.875rem;color:var(--text-2);line-height:1.8;padding-left:1.25rem;list-style-type:disc;">
+              <li>Maintain login sessions</li>
+              <li>Save preferences</li>
+              <li>Improve functionality</li>
+            </ul>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Data Sharing</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;margin-bottom:0.75rem;">
+              Filmetric does not sell personal information. We do not share personal information with advertisers, marketers, or unrelated third parties. Personal information is not sold or shared with third parties for advertising or marketing purposes.
+            </p>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Personal information is only processed when necessary to operate the platform and provide requested features.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">User Content</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Reviews, ratings, photos, and submissions may be publicly visible on Filmetric.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Account Deletion</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Users may request deletion of their account and associated personal information.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Contact</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              For any privacy inquiries, contact us at: <a href="mailto:contact@filmetric.com" style="color:var(--cream);text-decoration:none;border-bottom:1px solid var(--border-hover);padding-bottom:1px;">contact@filmetric.com</a>.
+            </p>
+          </div>
+        </div>
       </div>`);
   }
 
+  // ── TERMS VIEW ────────────────────────────────────────
+  function renderTermsView() {
+    setMeta({
+      title: "Terms of Service | Filmetric",
+      description: "Read the Terms of Service for using the Filmetric cinema discovery platform.",
+      canonicalPath: "#/terms"
+    });
+    renderLayout(`
+      <div class="container" style="max-width:680px;padding:5rem var(--gutter);">
+        <div class="section-label" style="margin-bottom:1.5rem;">Legal</div>
+        <h1 class="page-title" style="margin-bottom:0.5rem;font-size:2.2rem;font-weight:600;color:var(--cream);">Terms of Service</h1>
+        <div style="font-size:0.75rem;font-family:'JetBrains Mono',monospace;text-transform:uppercase;color:var(--text-3);letter-spacing:0.05em;margin-bottom:3rem;">Last Updated: June 2026</div>
+
+        <div style="display:flex;flex-direction:column;gap:2.5rem;">
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Using Filmetric</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Filmetric is provided to help users discover and compare cinema experiences.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">User Accounts</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Users are responsible for maintaining the security of their accounts.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Community Contributions</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;margin-bottom:0.75rem;">Users may submit:</p>
+            <ul style="font-size:0.875rem;color:var(--text-2);line-height:1.8;padding-left:1.25rem;list-style-type:disc;margin-bottom:0.75rem;">
+              <li>Reviews</li>
+              <li>Ratings</li>
+              <li>Photos</li>
+              <li>Corrections</li>
+              <li>Missing screen information</li>
+            </ul>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Filmetric reserves the right to review, approve, reject, edit, or remove submissions.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">User Content</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Users retain ownership of content they submit. By submitting content, users grant Filmetric permission to display and use that content within the platform.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Accuracy Disclaimer</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Cinema specifications and theatre information may change over time. While Filmetric strives for accuracy, information should be independently verified when necessary.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Prohibited Content</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;margin-bottom:0.75rem;">Users may not:</p>
+            <ul style="font-size:0.875rem;color:var(--text-2);line-height:1.8;padding-left:1.25rem;list-style-type:disc;">
+              <li>Submit false information</li>
+              <li>Upload copyrighted content they do not own</li>
+              <li>Upload harmful or abusive content</li>
+              <li>Attempt to misuse the platform</li>
+            </ul>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Limitation of Liability</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              Filmetric is provided on an "as is" basis without warranties of any kind.
+            </p>
+          </div>
+
+          <div>
+            <h2 style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Changes</h2>
+            <p style="font-size:0.875rem;color:var(--text-2);line-height:1.7;">
+              These terms may be updated periodically. Continued use of Filmetric constitutes acceptance of updated terms.
+            </p>
+          </div>
+        </div>
+      </div>`);
+  }
+
+  // ── AUTH MODAL ────────────────────────────────────────
   // ── AUTH MODAL ────────────────────────────────────────
   function showAuthModal() {
     const existing = document.getElementById("auth-modal-backdrop");
@@ -1741,20 +2637,40 @@ document.addEventListener("DOMContentLoaded", () => {
     el.id = "auth-modal-backdrop";
     el.className = "modal-backdrop";
     el.innerHTML = `
-      <div class="modal" id="auth-modal">
+      <div class="modal" id="auth-modal" style="max-width: 400px;">
         <div class="modal-header">
           <div class="modal-title">Join Filmetric</div>
-          <button class="icon-btn" id="modal-close">
+          <button class="icon-btn" id="modal-close" aria-label="Close modal">
             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path d="M18 6 6 18M6 6l12 12"/>
             </svg>
           </button>
         </div>
+        
+        <div style="padding: 1.5rem 1.5rem 0.5rem 1.5rem;">
+          <button class="btn btn-full" id="google-signin-btn" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: #ffffff !important; color: #111111 !important; font-weight: 600; border: 1px solid #ffffff; transition: opacity var(--t) var(--ease);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+            Continue with Google
+          </button>
+          
+          <div style="display: flex; align-items: center; text-align: center; margin: 1.25rem 0; color: var(--text-3); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.1em; text-transform: uppercase;">
+            <span style="flex: 1; border-bottom: 1px solid var(--border);"></span>
+            <span style="padding: 0 10px;">OR</span>
+            <span style="flex: 1; border-bottom: 1px solid var(--border);"></span>
+          </div>
+        </div>
+
         <div class="modal-tabs">
           <button class="modal-tab active" data-tab="login">Login</button>
           <button class="modal-tab" data-tab="signup">Sign Up</button>
         </div>
-        <div id="tab-login">
+        
+        <div id="tab-login" style="padding: 1.5rem;">
           <div class="form-group">
             <label class="form-label" for="login-email">Email</label>
             <input type="email" id="login-email" class="form-input" placeholder="you@example.com" autocomplete="email">
@@ -1763,10 +2679,13 @@ document.addEventListener("DOMContentLoaded", () => {
             <label class="form-label" for="login-password">Password</label>
             <input type="password" id="login-password" class="form-input" placeholder="Password" autocomplete="current-password">
           </div>
-          <div id="login-error" class="form-error"></div>
-          <button class="btn btn-primary btn-full mt-2" id="login-btn">Login</button>
+          <div id="login-error" class="form-error" style="color: #FF7B72; font-size: 0.75rem; margin-top: 0.5rem; min-height: 1rem;"></div>
+          <button class="btn btn-primary btn-full mt-2" id="login-btn">
+            <span class="btn-text">Login</span>
+          </button>
         </div>
-        <div id="tab-signup" class="hidden">
+        
+        <div id="tab-signup" class="hidden" style="padding: 1.5rem;">
           <div class="form-group">
             <label class="form-label" for="signup-username">Username</label>
             <input type="text" id="signup-username" class="form-input" placeholder="your_username">
@@ -1779,8 +2698,10 @@ document.addEventListener("DOMContentLoaded", () => {
             <label class="form-label" for="signup-password">Password</label>
             <input type="password" id="signup-password" class="form-input" placeholder="Min 8 characters" autocomplete="new-password">
           </div>
-          <div id="signup-error" class="form-error"></div>
-          <button class="btn btn-primary btn-full mt-2" id="signup-btn">Create Account</button>
+          <div id="signup-error" class="form-error" style="color: #FF7B72; font-size: 0.75rem; margin-top: 0.5rem; min-height: 1rem;"></div>
+          <button class="btn btn-primary btn-full mt-2" id="signup-btn">
+            <span class="btn-text">Create Account</span>
+          </button>
         </div>
       </div>`;
 
@@ -1801,13 +2722,46 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
 
+    document.getElementById("google-signin-btn")?.addEventListener("click", async () => {
+      const btn = document.getElementById("google-signin-btn");
+      btn.disabled = true;
+      btn.innerHTML = `<span style="color:#111111 !important;">Connecting...</span>`;
+      try {
+        await authSignInWithGoogle();
+        if (!supabase) { close(); showToast("Logged in via Google (mock)!"); resolveRoute(); }
+      } catch (e) {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+          </svg>
+          Continue with Google`;
+        const errEl = document.getElementById("login-error") || document.getElementById("signup-error");
+        if (errEl) errEl.textContent = e.message || "Google login failed.";
+      }
+    });
+
     document.getElementById("login-btn")?.addEventListener("click", async () => {
       const email = document.getElementById("login-email").value.trim();
       const pass  = document.getElementById("login-password").value;
       const errEl = document.getElementById("login-error");
+      const btn = document.getElementById("login-btn");
       errEl.textContent = "";
-      try { await authSignIn(email, pass); close(); showToast("Welcome back!"); resolveRoute(); }
-      catch (e) { errEl.textContent = e.message || "Login failed."; }
+      btn.disabled = true;
+      btn.textContent = "Logging in...";
+      try {
+        await authSignIn(email, pass);
+        close();
+        showToast("Welcome back!");
+        resolveRoute();
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "Login";
+        errEl.textContent = e.message || "Login failed.";
+      }
     });
 
     document.getElementById("signup-btn")?.addEventListener("click", async () => {
@@ -1815,10 +2769,22 @@ document.addEventListener("DOMContentLoaded", () => {
       const email    = document.getElementById("signup-email").value.trim();
       const pass     = document.getElementById("signup-password").value;
       const errEl    = document.getElementById("signup-error");
+      const btn = document.getElementById("signup-btn");
       errEl.textContent = "";
+      if (!username) { errEl.textContent = "Username is required."; return; }
       if (pass.length < 8) { errEl.textContent = "Password must be at least 8 characters."; return; }
-      try { await authSignUp(email, pass, username); close(); showToast("Account created. Welcome!"); resolveRoute(); }
-      catch (e) { errEl.textContent = e.message || "Sign up failed."; }
+      btn.disabled = true;
+      btn.textContent = "Creating Account...";
+      try {
+        await authSignUp(email, pass, username);
+        close();
+        showToast("Account created. Welcome!");
+        resolveRoute();
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "Create Account";
+        errEl.textContent = e.message || "Sign up failed.";
+      }
     });
   }
 
@@ -1841,6 +2807,323 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("cancel-signout")?.addEventListener("click", close);
     document.getElementById("confirm-signout")?.addEventListener("click", async () => {
       close(); await authSignOut(); showToast("Signed out."); navigate("#/");
+    });
+  }
+
+  // ── Community Submission & Modification Modals ──────────
+  function showCorrectionModal(theatreId) {
+    if (!currentUser) { showAuthModal(); return; }
+    const el = document.createElement("div");
+    el.className = "modal-backdrop";
+    el.innerHTML = `
+      <div class="modal" style="max-width:380px;">
+        <div class="modal-header">
+          <div class="modal-title">Submit Correction</div>
+          <button class="icon-btn" id="correction-close">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div style="padding:1.5rem;">
+          <div class="form-group">
+            <label class="form-label">Field requiring correction</label>
+            <select id="correction-field" class="form-input">
+              <option value="Format">Format (IMAX, Dolby Cinema, PLF, etc)</option>
+              <option value="Projection">Projection Type</option>
+              <option value="Aspect Ratio">Aspect Ratio</option>
+              <option value="Dimensions">Dimensions / Screen Size</option>
+              <option value="Seating Capacity">Seating Capacity</option>
+              <option value="GPS Coordinates">GPS Coordinates</option>
+              <option value="Other">Other details</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Proposed Value</label>
+            <input type="text" id="correction-value" class="form-input" placeholder="e.g. 1.43:1, 450 seats, etc.">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Explanation / Comment</label>
+            <textarea id="correction-comment" class="form-input" style="height:64px; resize:none;" placeholder="Provide any source or reference notes..."></textarea>
+          </div>
+          <div id="correction-error" class="form-error" style="color:#FF7B72; font-size:0.75rem; margin-top:0.5rem; min-height:1rem;"></div>
+          <button class="btn btn-primary btn-full mt-2" id="correction-submit-btn">Submit Correction</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("open"));
+    const close = () => { el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
+    document.getElementById("correction-close")?.addEventListener("click", close);
+
+    document.getElementById("correction-submit-btn")?.addEventListener("click", async () => {
+      const field = document.getElementById("correction-field").value;
+      const val = document.getElementById("correction-value").value.trim();
+      const comment = document.getElementById("correction-comment").value.trim();
+      const errEl = document.getElementById("correction-error");
+      if (!val) { errEl.textContent = "Proposed value is required."; return; }
+
+      const correctionData = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `c-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        theatre_id: theatreId,
+        user_id: currentUser.id,
+        field_name: field,
+        proposed_value: val,
+        comment: comment,
+        status: "Pending",
+        created_at: new Date().toISOString()
+      };
+
+      try {
+        if (supabase) {
+          const { error } = await supabase
+            .from('corrections')
+            .insert(correctionData);
+          if (error) throw error;
+        } else {
+          const all = JSON.parse(localStorage.getItem("filmetric_corrections") || "[]");
+          all.push(correctionData);
+          localStorage.setItem("filmetric_corrections", JSON.stringify(all));
+        }
+        showToast("Correction submitted successfully!");
+        close();
+        resolveRoute();
+      } catch (e) {
+        errEl.textContent = e.message || "Failed to submit correction.";
+      }
+    });
+  }
+
+  function showUploadPhotoModal(theatreId) {
+    if (!currentUser) { showAuthModal(); return; }
+    const el = document.createElement("div");
+    el.className = "modal-backdrop";
+    el.innerHTML = `
+      <div class="modal" style="max-width:380px;">
+        <div class="modal-header">
+          <div class="modal-title">Upload Photo</div>
+          <button class="icon-btn" id="upload-close">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div style="padding:1.5rem;">
+          <div class="form-group">
+            <label class="form-label">Photo Image URL</label>
+            <input type="text" id="upload-url" class="form-input" placeholder="https://example.com/theatre.jpg">
+          </div>
+          <div id="upload-error" class="form-error" style="color:#FF7B72; font-size:0.75rem; margin-top:0.5rem; min-height:1rem;"></div>
+          <button class="btn btn-primary btn-full mt-2" id="upload-submit-btn">Submit Photo</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("open"));
+    const close = () => { el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
+    document.getElementById("upload-close")?.addEventListener("click", close);
+
+    document.getElementById("upload-submit-btn")?.addEventListener("click", async () => {
+      const imgUrl = document.getElementById("upload-url").value.trim();
+      const errEl = document.getElementById("upload-error");
+      if (!imgUrl) { errEl.textContent = "Image URL is required."; return; }
+      if (!imgUrl.startsWith("http://") && !imgUrl.startsWith("https://")) { errEl.textContent = "Please enter a valid HTTP/HTTPS URL."; return; }
+
+      const photoData = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `p-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        theatre_id: theatreId,
+        user_id: currentUser.id,
+        image_url: imgUrl,
+        approved: true, // auto-approve for premium look
+        created_at: new Date().toISOString()
+      };
+
+      try {
+        if (supabase) {
+          const { error } = await supabase
+            .from('theatre_photos')
+            .insert(photoData);
+          if (error) throw error;
+        } else {
+          const all = JSON.parse(localStorage.getItem("filmetric_theatre_photos") || "[]");
+          all.push(photoData);
+          localStorage.setItem("filmetric_theatre_photos", JSON.stringify(all));
+        }
+        showToast("Photo uploaded successfully!");
+        close();
+        resolveRoute();
+      } catch (e) {
+        errEl.textContent = e.message || "Failed to upload photo.";
+      }
+    });
+  }
+
+  function showSubmitScreenModal() {
+    if (!currentUser) { showAuthModal(); return; }
+    const el = document.createElement("div");
+    el.className = "modal-backdrop";
+    el.innerHTML = `
+      <div class="modal" style="max-width:380px;">
+        <div class="modal-header">
+          <div class="modal-title">Submit Missing Screen</div>
+          <button class="icon-btn" id="submission-close">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div style="padding:1.5rem;">
+          <div class="form-group">
+            <label class="form-label">Theatre Name</label>
+            <input type="text" id="submission-name" class="form-input" placeholder="e.g. Broadway Megaplex">
+          </div>
+          <div class="form-group">
+            <label class="form-label">City</label>
+            <input type="text" id="submission-city" class="form-input" placeholder="e.g. Coimbatore">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Format</label>
+            <select id="submission-format" class="form-input">
+              <option value="IMAX">IMAX</option>
+              <option value="Dolby Cinema">Dolby Cinema</option>
+              <option value="PLF">PLF</option>
+              <option value="EPIQ">EPIQ</option>
+              <option value="Samsung Onyx">Samsung Onyx</option>
+              <option value="ScreenX">ScreenX</option>
+              <option value="Other">Other Premium Screen</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Projection details (if known)</label>
+            <input type="text" id="submission-projection" class="form-input" placeholder="e.g. Dual 4K Laser">
+          </div>
+          <div id="submission-error" class="form-error" style="color:#FF7B72; font-size:0.75rem; margin-top:0.5rem; min-height:1rem;"></div>
+          <button class="btn btn-primary btn-full mt-2" id="submission-submit-btn">Submit Screen</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("open"));
+    const close = () => { el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
+    document.getElementById("submission-close")?.addEventListener("click", close);
+
+    document.getElementById("submission-submit-btn")?.addEventListener("click", async () => {
+      const name = document.getElementById("submission-name").value.trim();
+      const city = document.getElementById("submission-city").value.trim();
+      const format = document.getElementById("submission-format").value;
+      const projection = document.getElementById("submission-projection").value.trim();
+      const errEl = document.getElementById("submission-error");
+      
+      if (!name || !city) { errEl.textContent = "Theatre name and city are required."; return; }
+
+      const submissionData = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        user_id: currentUser.id,
+        theatre_name: name,
+        city: city,
+        format: format,
+        projection: projection,
+        status: "Pending",
+        created_at: new Date().toISOString()
+      };
+
+      try {
+        if (supabase) {
+          const { error } = await supabase
+            .from('screen_submissions')
+            .insert(submissionData);
+          if (error) throw error;
+        } else {
+          const all = JSON.parse(localStorage.getItem("filmetric_screen_submissions") || "[]");
+          all.push(submissionData);
+          localStorage.setItem("filmetric_screen_submissions", JSON.stringify(all));
+        }
+        showToast("Screen submitted for verification!");
+        close();
+        resolveRoute();
+      } catch (e) {
+        errEl.textContent = e.message || "Failed to submit screen.";
+      }
+    });
+  }
+
+  function showEditProfileModal() {
+    if (!currentUser) return;
+    const el = document.createElement("div");
+    el.className = "modal-backdrop";
+    el.innerHTML = `
+      <div class="modal" style="max-width:380px;">
+        <div class="modal-header">
+          <div class="modal-title">Edit Profile</div>
+          <button class="icon-btn" id="edit-close">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div style="padding:1.5rem;">
+          <div class="form-group">
+            <label class="form-label">Username</label>
+            <input type="text" id="edit-username" class="form-input" value="${currentUser.username || ""}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Avatar Image URL</label>
+            <input type="text" id="edit-avatar" class="form-input" value="${currentUser.avatarUrl || ""}" placeholder="https://example.com/avatar.jpg">
+          </div>
+          <div id="edit-error" class="form-error" style="color:#FF7B72; font-size:0.75rem; margin-top:0.5rem; min-height:1rem;"></div>
+          <button class="btn btn-primary btn-full mt-2" id="edit-save-btn">Save Changes</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("open"));
+    const close = () => { el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
+    document.getElementById("edit-close")?.addEventListener("click", close);
+    
+    document.getElementById("edit-save-btn")?.addEventListener("click", async () => {
+      const username = document.getElementById("edit-username").value.trim();
+      const avatarUrl = document.getElementById("edit-avatar").value.trim();
+      const errEl = document.getElementById("edit-error");
+      if (!username) { errEl.textContent = "Username is required."; return; }
+      
+      try {
+        if (supabase) {
+          const { error } = await supabase
+            .from('profiles')
+            .update({ username, avatar_url: avatarUrl })
+            .eq('id', currentUser.id);
+          if (error) throw error;
+        } else {
+          // Local storage mock updates
+          const profiles = JSON.parse(localStorage.getItem("filmetric_profiles") || "{}");
+          profiles[currentUser.email] = {
+            ...profiles[currentUser.email],
+            username,
+            avatarUrl
+          };
+          localStorage.setItem("filmetric_profiles", JSON.stringify(profiles));
+          
+          // Sync window profiles
+          const mockProfiles = JSON.parse(localStorage.getItem("filmetric_mock_profiles") || "{}");
+          mockProfiles[currentUser.id] = { username, avatar_url: avatarUrl };
+          localStorage.setItem("filmetric_mock_profiles", JSON.stringify(mockProfiles));
+        }
+        
+        showToast("Profile updated successfully!");
+        close();
+        
+        // Refresh session
+        if (supabase) {
+          const { data: { session } } = await supabase.auth.getSession();
+          await handleAuthSession(session);
+        } else {
+          const saved = localStorage.getItem("filmetric_session");
+          await handleAuthSession(saved ? JSON.parse(saved) : null);
+        }
+        resolveRoute();
+      } catch (e) {
+        errEl.textContent = e.message || "Failed to update profile.";
+      }
     });
   }
 
