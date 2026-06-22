@@ -1989,6 +1989,70 @@ textarea:focus-visible {
   }
 }
 
+/* ── Leaflet Map Preview ───────────────────────────────── */
+.mini-map-preview {
+  height: 220px;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  margin-bottom: 1rem;
+  background: #090909;
+}
+
+@media (max-width: 768px) {
+  .mini-map-preview {
+    height: 200px;
+  }
+}
+
+/* Custom map marker pin styling */
+.custom-map-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.marker-pin {
+  width: 18px;
+  height: 18px;
+  background-color: var(--surface, #111111);
+  border: 2px solid var(--white, #ffffff);
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(0,0,0,0.6);
+  position: relative;
+}
+
+.marker-pin::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background-color: var(--cream, #e4d5bc);
+  border-radius: 50%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Leaflet Dark Popup styling overrides */
+.leaflet-popup-content-wrapper {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--r-md) !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+}
+
+.leaflet-popup-content {
+  margin: 10px 14px !important;
+}
+
+.leaflet-popup-tip {
+  background: var(--surface) !important;
+  box-shadow: none !important;
+}
+
 /* ── Utility ───────────────────────────────────────────── */
 .hidden { display: none !important; }
 .text-center { text-align: center; }
