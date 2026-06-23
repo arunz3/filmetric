@@ -664,6 +664,91 @@ document.addEventListener("DOMContentLoaded", () => {
   const SCREENS_PER_PAGE = 18;
   let selectedMovie = null;
 
+  // Near Me & Favorites State
+  let nearMeSearchQuery = "";
+  let nearMeFormatFilter = "";
+  let nearMeDistanceFilter = "any";
+  let nearMeCityFilter = "";
+  let nearMeSortOption = "proximity";
+  let nearMeQuickFilter = "";
+  let nearMeMap = null;
+  let nearMeMarkersGroup = null;
+  let selectedScreenId = null;
+
+  function applyQuickFilter(type) {
+    nearMeQuickFilter = type;
+    
+    const searchInput = document.getElementById("nearme-search-input");
+    const formatSelect = document.getElementById("nearme-format-select");
+    const distanceSelect = document.getElementById("nearme-distance-select");
+    const citySelect = document.getElementById("nearme-city-select");
+    const sortSelect = document.getElementById("nearme-sort-select");
+    
+    if (searchInput) searchInput.value = "";
+    nearMeSearchQuery = "";
+    
+    if (formatSelect) formatSelect.value = "";
+    nearMeFormatFilter = "";
+    
+    if (distanceSelect) distanceSelect.value = "any";
+    nearMeDistanceFilter = "any";
+
+    if (citySelect) citySelect.value = "";
+    nearMeCityFilter = "";
+    
+    if (type === "imax-near") {
+      nearMeFormatFilter = "IMAX";
+      if (userCoords) {
+        nearMeSortOption = "proximity";
+        if (sortSelect) sortSelect.value = "proximity";
+      }
+    } else if (type === "dolby-near") {
+      nearMeFormatFilter = "Dolby Cinema";
+      if (userCoords) {
+        nearMeSortOption = "proximity";
+        if (sortSelect) sortSelect.value = "proximity";
+      }
+    } else if (type === "largest") {
+      nearMeSortOption = "screenSize";
+      if (sortSelect) sortSelect.value = "screenSize";
+    } else if (type === "aspect-143") {
+      // Handled in renderNearMeResults filtering
+    } else if (type === "top-rated") {
+      nearMeSortOption = "rating";
+      if (sortSelect) sortSelect.value = "rating";
+    }
+    
+    renderNearMeResults();
+  }
+
+  function clearQuickFilter() {
+    nearMeQuickFilter = "";
+    renderNearMeResults();
+  }
+
+  function getFavorites() {
+    const key = currentUser ? `filmetric_favorites_${currentUser.id}` : "filmetric_favorites_guest";
+    try {
+      return JSON.parse(localStorage.getItem(key) || "[]");
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function toggleFavorite(screenId) {
+    const key = currentUser ? `filmetric_favorites_${currentUser.id}` : "filmetric_favorites_guest";
+    let favs = getFavorites();
+    if (favs.includes(screenId)) {
+      favs = favs.filter(id => id !== screenId);
+      showToast("Removed from Saved Screens.");
+    } else {
+      favs.push(screenId);
+      showToast("Saved to profile.");
+    }
+    localStorage.setItem(key, JSON.stringify(favs));
+    return favs.includes(screenId);
+  }
+
   // ── OMDb API ─────────────────────────────────────────
   const OMDB_BASE = "https://www.omdbapi.com/";
 
@@ -862,7 +947,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function getFooterHtml() {
-    const totalScreens = window.DB.allScreens.length + window.DB.intlImax.length;
     return `
       <footer class="site-footer">
         <div class="container">
@@ -891,8 +975,7 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
           </div>
           <div class="footer-bottom">
-            <span class="footer-copy">&copy; 2025 Filmetric. All rights reserved.</span>
-            ${totalScreens > 0 ? `<span class="footer-copy">${totalScreens} screens in database.</span>` : ""}
+            <span class="footer-copy">&copy; 2026 Filmetric. All rights reserved.</span>
           </div>
         </div>
       </footer>`;
@@ -1079,58 +1162,84 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ── HOME VIEW ─────────────────────────────────────────
+  let homeMiniMap = null;
+
   function renderHomeView() {
     setMeta({
       title: "Filmetric — Find the Best Screen for Every Movie",
       description: "Discover premium cinema screens. Compare IMAX, Dolby Cinema, and large format screens.",
       canonicalPath: ""
     });
-    const screens = window.DB.allScreens;
-    // Priority: Indian IMAX first, then PLF, then other
-    const imax  = screens.filter(s => s._table === "indian_imax");
-    const plf   = screens.filter(s => s._table === "plfs");
-    const other = screens.filter(s => s._table === "other_screens");
-    const featured = [...imax, ...plf, ...other].slice(0, 6);
+    const screens = window.DB.allScreens || [];
+    const totalScreensCount = screens.length || 141;
+    const imaxIndiaCount = window.DB.indianImax?.length || 37;
+    const imaxWorldCount = window.DB.intlImax?.length || 45;
+    const citiesCount = new Set(screens.map(s => s.city).filter(Boolean)).size || 14;
 
     const html = `
-      ${heroHtml()}
+      ${heroHtml(totalScreensCount, imaxIndiaCount, imaxWorldCount, citiesCount)}
       <div class="divider"></div>
       ${formatsHtml()}
       <div class="divider"></div>
-      ${featuredScreensHtml(featured, screens.length)}
-      ${nearMeCTAHtml()}
+      ${featuredScreensHtml()}
       <div class="divider"></div>
-      ${moviePreviewHtml()}
+      ${nearMePreviewHtml()}
+      <div class="divider"></div>
+      ${movieFormatFinderHtml()}
+      <div class="divider"></div>
+      ${communitySectionHtml()}
+      <div class="divider"></div>
+      ${seoContentBlockHtml()}
     `;
     renderLayout(html, "home");
+
+    setTimeout(() => {
+      initHomeMiniMap();
+      initHomeMovieFinder();
+      initHomeCommunityCTA();
+    }, 50);
   }
 
-  function heroHtml() {
+  function heroHtml(totalScreens, imaxIndia, imaxWorld, cities) {
     return `
       <section class="hero">
         <div class="hero-content">
-          <div class="hero-eyebrow">Premium Cinema Discovery</div>
           <h1 class="hero-headline">Find the Best Screen<br>for Every Movie.</h1>
-          <p class="hero-sub">Discover IMAX, Dolby Cinema, and premium large format screens across India and the world.</p>
+          <p class="hero-sub">Compare IMAX, Dolby Cinema, ScreenX, Samsung Onyx, PLF, and premium cinema formats across India and the world. Explore screen sizes, aspect ratios, projection systems, and theatre rankings.</p>
           <div class="hero-actions">
             <a href="#/screens" class="btn btn-primary btn-lg">Explore Screens</a>
             <a href="#/near-me" class="btn btn-ghost btn-lg">Find Near Me</a>
           </div>
-        </div>
-        <div class="hero-scroll">
-          <span>Scroll</span>
-          <div class="hero-scroll-line"></div>
+          <div class="hero-stats-counters">
+            <div class="stat-counter-card">
+              <div class="stat-number">${totalScreens}+</div>
+              <div class="stat-label">Screens</div>
+            </div>
+            <div class="stat-counter-card">
+              <div class="stat-number">${imaxIndia}</div>
+              <div class="stat-label">IMAX India</div>
+            </div>
+            <div class="stat-counter-card">
+              <div class="stat-number">${imaxWorld}</div>
+              <div class="stat-label">IMAX Worldwide</div>
+            </div>
+            <div class="stat-counter-card">
+              <div class="stat-number">${cities}</div>
+              <div class="stat-label">Cities</div>
+            </div>
+          </div>
         </div>
       </section>`;
   }
 
   function formatsHtml() {
     const formats = [
-      { key: "IMAX",    name: "IMAX",         spec: "1.43:1 — 1.90:1",     desc: "The largest cinema format. Dual 4K laser on screens up to 22m tall." },
-      { key: "Dolby",   name: "Dolby Cinema",  spec: "Dolby Vision + Atmos", desc: "HDR laser projection with Dolby Atmos spatial audio." },
-      { key: "PLF",     name: "PLF",           spec: "Premium Large Format", desc: "Oversized screens with enhanced projection beyond standard multiplexes." },
-      { key: "EPIQ",    name: "EPIQ",          spec: "PVR/Miraj format",     desc: "Six-story screens with 4K laser and 11.1 surround audio." },
-      { key: "Samsung Onyx", name: "Samsung Onyx", spec: "Direct View LED", desc: "Bright, flicker-free LED display without projector or lens." },
+      { key: "IMAX",    name: "IMAX",         spec: "1.43:1 • GT Laser • Dual Laser" },
+      { key: "Dolby",   name: "Dolby Cinema",  spec: "Dolby Vision • Dolby Atmos" },
+      { key: "Samsung Onyx", name: "Samsung Onyx", spec: "LED Cinema Display" },
+      { key: "PLF",     name: "PLF",           spec: "Premium Large Format" },
+      { key: "EPIQ",     name: "EPIQ",          spec: "Large Format Projection" },
+      { key: "ScreenX",    name: "ScreenX",          spec: "270° Multi-Screen Experience" },
     ];
     return `
       <section class="section-gap">
@@ -1140,105 +1249,315 @@ document.addEventListener("DOMContentLoaded", () => {
               <div class="section-label">Formats</div>
               <div class="section-title">Premium Cinema Formats</div>
             </div>
-            <a href="#/screens" class="section-link">Browse all screens</a>
+            <a href="#/screens" class="section-link">Browse all formats</a>
           </div>
           <div class="formats-grid">
             ${formats.map(f => `
-              <div class="format-card" data-format="${f.key}">
-                <div class="format-name">${f.name}</div>
-                <div class="format-spec">${f.spec}</div>
-                <div class="format-desc">${f.desc}</div>
+              <div class="format-card compact-format-card" data-format="${f.key}">
+                <div class="format-name">${f.key}</div>
+                <div class="format-spec-details" style="font-family:'JetBrains Mono', monospace; font-size:0.7rem; color:var(--cream); margin-top:0.5rem;">${f.spec}</div>
               </div>`).join("")}
           </div>
         </div>
       </section>`;
   }
 
-  function featuredScreensHtml(featured, total) {
-    const countLabel = total > 0 ? `View all ${total} screens` : "Browse all screens";
-    const cards = featured.length > 0
-      ? featured.map(s => screenCardHtml(s)).join("")
-      : skeletonCardsHtml(6);
+  function findScreenIdByQuery(query) {
+    const screens = window.DB.allScreens || [];
+    const s = screens.find(sc => sc.name && sc.name.toLowerCase().includes(query.toLowerCase()));
+    return s ? `#/screen/${s.id}` : `#/screens`;
+  }
+
+  function featuredScreensHtml() {
+    const scienceCityLink = findScreenIdByQuery("science city");
+    const prasadsLink = findScreenIdByQuery("prasads");
+    const wadalaLink = findScreenIdByQuery("wadala");
+    const broadwayLink = findScreenIdByQuery("broadway");
+
+    const curated = [
+      { rank: "01", name: "Gujarat Science City", sub: "Ahmedabad", desc: "Largest IMAX Screen in India", link: scienceCityLink, format: "IMAX" },
+      { rank: "02", name: "Prasads PCX", sub: "Hyderabad", desc: "Largest Non-IMAX Premium Screen", link: prasadsLink, format: "PLF" },
+      { rank: "03", name: "Miraj IMAX Wadala", sub: "Mumbai", desc: "GT Laser IMAX", link: wadalaLink, format: "IMAX" },
+      { rank: "04", name: "Broadway Megaplex", sub: "Coimbatore", desc: "Premium IMAX Experience", link: broadwayLink, format: "IMAX" },
+    ];
+
     return `
       <section class="section-gap">
         <div class="container">
           <div class="section-header">
             <div>
-              <div class="section-label">Featured</div>
-              <div class="section-title">Notable Screens</div>
+              <div class="section-label">Ranked</div>
+              <div class="section-title">Featured Screens</div>
             </div>
-            <a href="#/screens" class="section-link">${countLabel}</a>
+            <a href="#/rankings" class="section-link">View Full Rankings &rarr;</a>
           </div>
-          <div class="screens-grid">${cards}</div>
+          <div class="featured-ranking-grid">
+            ${curated.map(s => `
+              <a href="${s.link}" class="ranking-card-link">
+                <div class="ranking-card">
+                  <div class="ranking-card-number">#${s.rank}</div>
+                  <div class="ranking-card-content">
+                    <span class="ranking-card-format-tag format-${s.format.toLowerCase()}">${s.format}</span>
+                    <h3 class="ranking-card-name">${s.name}</h3>
+                    <div class="ranking-card-city">${s.sub}</div>
+                    <p class="ranking-card-desc">${s.desc}</p>
+                  </div>
+                </div>
+              </a>`).join("")}
+          </div>
         </div>
       </section>`;
   }
 
-  function nearMeCTAHtml() {
-    // Use real IMAX screens with coordinates for the preview
-    const withCoords = window.DB.indianImax
-      .filter(r => r.lat && r.long)
-      .slice(0, 3);
+  function nearMePreviewHtml() {
+    const screens = (window.DB.allScreens || [])
+      .filter(s => s.lat && s.lon)
+      .slice(0, 4);
 
-    const previewRows = withCoords.length > 0
-      ? withCoords.map((r, i) => `
-          <div class="nearme-screen-row">
-            <span class="nearme-rank">${String(i + 1).padStart(2, "0")}</span>
-            <span class="nearme-row-name">${r.location}</span>
-            <span class="nearme-row-format">IMAX</span>
-            <span class="nearme-row-dist">${r.city}</span>
-          </div>`).join("")
-      : `<div class="nearme-screen-row">
-          <span class="nearme-row-name" style="color:var(--text-3);font-size:0.8rem;">Location access required</span>
-        </div>`;
+    const rows = screens.length > 0
+      ? screens.map((s, i) => `
+          <a href="#/screen/${s.id}" class="preview-screen-row-link">
+            <div class="preview-screen-row">
+              <span class="preview-rank">#${String(i + 1).padStart(2, "0")}</span>
+              <div class="preview-row-details">
+                <span class="preview-row-name">${s.name}</span>
+                <span class="preview-row-city">${s.city}</span>
+              </div>
+              <span class="preview-row-format format-${s.format.toLowerCase().replace(/\s+/g, "-")}">${s.format}</span>
+            </div>
+          </a>`).join("")
+      : `<div class="preview-screen-row-empty" style="padding:1.5rem; text-align:center; color:var(--text-3); font-size:0.8rem;">No screens with geolocations found.</div>`;
 
     return `
-      <section class="nearme-section section-gap">
+      <section class="nearme-preview-section section-gap">
         <div class="container">
-          <div class="nearme-inner">
+          <div class="section-header">
             <div>
-              <div class="section-label">Location</div>
-              <h2 class="nearme-headline">The Best Cinema Experience Starts Near You.</h2>
-              <p class="nearme-desc">Filmetric ranks IMAX and premium screens by distance from your location.</p>
-              <a href="#/near-me" class="btn btn-primary">Find Screens Near Me</a>
+              <div class="section-label">Interactive Map</div>
+              <div class="section-title">Discover Near You</div>
             </div>
-            <div class="nearme-visual">${previewRows}</div>
+            <a href="#/near-me" class="section-link">Open Interactive Map &rarr;</a>
+          </div>
+          <div class="nearme-preview-grid">
+            <div class="nearme-preview-map-container">
+              <div id="home-mini-map" class="home-mini-map-el"></div>
+            </div>
+            <div class="nearme-preview-list-container">
+              <div class="preview-list-title">Notable Nearby Screens</div>
+              <div class="preview-list-rows">${rows}</div>
+            </div>
           </div>
         </div>
       </section>`;
   }
 
-  function moviePreviewHtml() {
+  function initHomeMiniMap() {
+    const mapEl = document.getElementById("home-mini-map");
+    if (!mapEl) return;
+
+    if (homeMiniMap) {
+      try { homeMiniMap.remove(); } catch (_) {}
+      homeMiniMap = null;
+    }
+
+    const defaultCenter = [12.9716, 77.5946];
+    const screens = (window.DB.allScreens || []).filter(s => s.lat && s.lon);
+    
+    homeMiniMap = L.map("home-mini-map", {
+      zoomControl: false,
+      attributionControl: false,
+      scrollWheelZoom: false,
+      dragging: !L.Browser.mobile,
+      touchZoom: true
+    }).setView(defaultCenter, 5);
+
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      maxZoom: 19
+    }).addTo(homeMiniMap);
+
+    const group = L.markerClusterGroup({
+      showCoverageOnHover: false,
+      maxClusterRadius: 40
+    });
+
+    screens.forEach(s => {
+      const color = getMarkerColor(s.format);
+      const label = getFormatCode(s.format);
+      const marker = L.marker([s.lat, s.lon], {
+        icon: createMarkerIcon(color, label, false)
+      });
+      marker.on("click", () => {
+        navigate(`#/screen/${s.id}`);
+      });
+      group.addLayer(marker);
+    });
+
+    homeMiniMap.addLayer(group);
+
+    if (screens.length > 0) {
+      const bounds = L.latLngBounds(screens.map(s => [s.lat, s.lon]));
+      homeMiniMap.fitBounds(bounds, { padding: [20, 20] });
+    }
+  }
+
+  function movieFormatFinderHtml() {
     const hasKey = !!omdbKey;
     return `
-      <section class="movie-preview-section section-gap">
+      <section class="movie-finder-section section-gap">
         <div class="container">
-          <div class="movie-preview-inner">
-            <div>
-              <div class="movie-preview-label">Movie Formats</div>
-              <h2 class="movie-preview-headline">Best Format for Your Movie.</h2>
-              <p class="movie-preview-desc">Not every screen is right for every film. Filmetric matches genres and cinematography to the optimal format.</p>
-              <a href="#/movies" class="btn btn-ghost">Find Your Format</a>
+          <div class="movie-finder-grid">
+            <div class="movie-finder-info">
+              <div class="section-label">Format Finder</div>
+              <h2 class="section-title">Best Format for Your Movie</h2>
+              <p class="movie-finder-desc">Not every screen is right for every film. Filmetric matches runtime and cinematography to the optimal format. Search any movie below to instantly see the format recommendation.</p>
+              
+              <div class="home-movie-search-wrap" style="margin-top:1.5rem;">
+                ${!hasKey ? `
+                  <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:1rem;margin-bottom:1rem;font-size:0.75rem;color:var(--text-2);">
+                    Configure OMDb API key in <a href="#/settings" style="color:var(--white);text-decoration:underline;">Settings</a> to enable movie search.
+                  </div>` : ""}
+                <div class="movies-input-group" style="position:relative;">
+                  <input type="text" class="form-input" id="home-movie-search" 
+                    placeholder="${hasKey ? "Search any movie..." : "Add OMDb API Key in Settings to search..."}" 
+                    ${!hasKey ? "disabled" : ""} autocomplete="off" style="width:100%; max-width:400px;">
+                  <div class="movie-suggestions" id="home-movie-suggestions"></div>
+                </div>
+              </div>
             </div>
-            <div class="movie-preview-card">
-              <div class="movie-row">
-                <span class="movie-row-label">Watching</span>
-                <span class="movie-row-val">Oppenheimer</span>
-              </div>
-              <div class="movie-row">
-                <span class="movie-row-label">Genre</span>
-                <span class="movie-row-val">Drama, History</span>
-              </div>
-              <div class="movie-row">
-                <span class="movie-row-label">Runtime</span>
-                <span class="movie-row-val">181 minutes</span>
-              </div>
-              <div class="movie-row">
-                <span class="movie-row-label">Recommended</span>
-                <span class="movie-row-val format-highlight">IMAX 1.43:1</span>
+            
+            <div class="movie-finder-card-container">
+              <div id="home-movie-result-card" class="movie-preview-card" style="background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); padding:2rem; max-width:480px; width:100%;">
+                <div class="movie-row" style="display:flex; justify-content:space-between; align-items:baseline; padding:0.85rem 0; border-bottom:1px solid var(--border);">
+                  <span class="movie-row-label" style="font-family:'JetBrains Mono', monospace; font-size:0.6rem; color:var(--text-3); text-transform:uppercase; width:100px; flex-shrink:0;">Watching</span>
+                  <span class="movie-row-val" id="home-movie-title" style="font-size:0.9rem; color:var(--text); font-weight:500;">Oppenheimer</span>
+                </div>
+                <div class="movie-row" style="display:flex; justify-content:space-between; align-items:baseline; padding:0.85rem 0; border-bottom:1px solid var(--border);">
+                  <span class="movie-row-label" style="font-family:'JetBrains Mono', monospace; font-size:0.6rem; color:var(--text-3); text-transform:uppercase; width:100px; flex-shrink:0;">Runtime</span>
+                  <span class="movie-row-val" id="home-movie-runtime" style="font-size:0.9rem; color:var(--text); font-weight:500;">181 min</span>
+                </div>
+                <div class="movie-row" style="display:flex; justify-content:space-between; align-items:baseline; padding:0.85rem 0; border-bottom:1px solid var(--border);">
+                  <span class="movie-row-label" style="font-family:'JetBrains Mono', monospace; font-size:0.6rem; color:var(--text-3); text-transform:uppercase; width:100px; flex-shrink:0;">Recommended</span>
+                  <span class="movie-row-val format-highlight" id="home-movie-format" style="font-family:'JetBrains Mono', monospace; font-size:1rem; color:var(--cream); font-weight:600;">IMAX 1.43:1</span>
+                </div>
+                <div class="movie-row" style="display:flex; justify-content:space-between; align-items:baseline; padding:0.85rem 0; border-bottom:none;">
+                  <span class="movie-row-label" style="font-family:'JetBrains Mono', monospace; font-size:0.6rem; color:var(--text-3); text-transform:uppercase; width:100px; flex-shrink:0;">Reason</span>
+                  <span class="movie-row-val" id="home-movie-reason" style="font-size:0.75rem; color:var(--text-2); line-height:1.4; text-align:right;">Shot on 15/70mm IMAX film, presenting the full 1.43:1 aspect ratio on compatible dual-laser and film screens.</span>
+                </div>
               </div>
             </div>
           </div>
+        </div>
+      </section>`;
+  }
+
+  function initHomeMovieFinder() {
+    const input = document.getElementById("home-movie-search");
+    const suggestions = document.getElementById("home-movie-suggestions");
+    if (!input || !suggestions) return;
+
+    let searchTimer = null;
+
+    input.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      const q = input.value.trim();
+      if (!q) { suggestions.classList.remove("open"); return; }
+      
+      searchTimer = setTimeout(async () => {
+        try {
+          const results = await omdbSearch(q);
+          if (results.length === 0) { suggestions.classList.remove("open"); return; }
+          
+          suggestions.innerHTML = results.map(m => {
+            const poster = (m.Poster && m.Poster !== "N/A") ? m.Poster : "";
+            const year = m.Year || "";
+            return `
+              <div class="movie-suggestion-item" data-movie-id="${m.imdbID}" style="display:flex; gap:0.75rem; padding:0.5rem; cursor:pointer;">
+                ${poster ? `<img src="${poster}" class="movie-poster-thumb" style="width:30px; height:45px; object-fit:cover; border-radius:2px;">` : `<div class="movie-poster-thumb" style="width:30px; height:45px; background:var(--surface-3); border-radius:2px;"></div>`}
+                <div>
+                  <div class="movie-suggestion-title" style="font-size:0.85rem; font-weight:500; color:var(--text);">${m.Title}</div>
+                  <div class="movie-suggestion-year" style="font-size:0.7rem; color:var(--text-3);">${year}</div>
+                </div>
+              </div>`;
+          }).join("");
+          suggestions.classList.add("open");
+
+          suggestions.querySelectorAll(".movie-suggestion-item").forEach(item => {
+            item.addEventListener("click", async () => {
+              const id = item.dataset.movieId;
+              suggestions.classList.remove("open");
+              input.value = item.querySelector(".movie-suggestion-title")?.textContent || "";
+              try {
+                const detail = await omdbDetail(id);
+                const rec = recommendFormat(detail);
+                document.getElementById("home-movie-title").textContent = detail.Title;
+                document.getElementById("home-movie-runtime").textContent = detail.Runtime || "—";
+                document.getElementById("home-movie-format").textContent = rec.format;
+                document.getElementById("home-movie-reason").textContent = rec.reason;
+              } catch (e) {
+                showToast("Failed to load movie details.");
+              }
+            });
+          });
+        } catch (err) {}
+      }, 400);
+    });
+
+    document.addEventListener("click", e => {
+      if (!input.contains(e.target) && !suggestions.contains(e.target)) {
+        suggestions.classList.remove("open");
+      }
+    });
+  }
+
+  function communitySectionHtml() {
+    return `
+      <section class="community-section section-gap" style="background:var(--surface); border-top:1px solid var(--border); border-bottom:1px solid var(--border); padding:5rem 0;">
+        <div class="container">
+          <div class="community-inner" style="max-width:640px; margin:0 auto; text-align:center;">
+            <div class="section-label">Community Driven Database</div>
+            <h2 class="section-title" style="font-family:'Playfair Display', Georgia, serif; font-size:2.2rem; font-style:italic; color:var(--cream); margin:1rem 0;">Help Improve Filmetric</h2>
+            <p class="community-desc" style="color:var(--text-2); font-size:0.95rem; margin-bottom:2rem; line-height:1.7;">Filmetric is powered by movie lovers. Help other filmgoers discover premium cinema experiences by keeping our database accurate and comprehensive.</p>
+            <div class="community-benefits-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:1.5rem; margin-bottom:2.5rem; text-align:left;">
+              <div style="background:var(--surface-2); border:1px solid var(--border); padding:1rem; border-radius:var(--r-md);">
+                <div style="font-weight:600; color:var(--white); margin-bottom:0.25rem;">Submit Screens</div>
+                <div style="font-size:0.75rem; color:var(--text-2);">Add missing IMAX, Dolby, or PLF screens.</div>
+              </div>
+              <div style="background:var(--surface-2); border:1px solid var(--border); padding:1rem; border-radius:var(--r-md);">
+                <div style="font-weight:600; color:var(--white); margin-bottom:0.25rem;">Upload Photos</div>
+                <div style="font-size:0.75rem; color:var(--text-2);">Provide real photos of screens and seating.</div>
+              </div>
+              <div style="background:var(--surface-2); border:1px solid var(--border); padding:1rem; border-radius:var(--r-md);">
+                <div style="font-weight:600; color:var(--white); margin-bottom:0.25rem;">Report Corrections</div>
+                <div style="font-size:0.75rem; color:var(--text-2);">Fix outdated specs or coordinates.</div>
+              </div>
+              <div style="background:var(--surface-2); border:1px solid var(--border); padding:1rem; border-radius:var(--r-md);">
+                <div style="font-weight:600; color:var(--white); margin-bottom:0.25rem;">Rate Auditoriums</div>
+                <div style="font-size:0.75rem; color:var(--text-2);">Share reviews of the projection and sound.</div>
+              </div>
+            </div>
+            <button id="home-contribute-btn" class="btn btn-primary btn-lg">Contribute to Filmetric</button>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function initHomeCommunityCTA() {
+    document.getElementById("home-contribute-btn")?.addEventListener("click", () => {
+      showSubmitScreenModal();
+    });
+  }
+
+  function seoContentBlockHtml() {
+    return `
+      <section class="seo-content-section section-gap" style="padding:4rem 0 6rem 0;">
+        <div class="container" style="max-width:800px; margin:0 auto; text-align:center;">
+          <h2 class="seo-title" style="font-family:'DM Sans', sans-serif; font-size:1.1rem; color:var(--text-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:1.5rem;">Cinema Formats & Theatre Database</h2>
+          <p class="seo-text" style="font-size:0.875rem; color:var(--text-2); line-height:1.8; margin-bottom:1.5rem;">
+            Filmetric helps moviegoers discover IMAX theatres, Dolby Cinema locations, Samsung Onyx screens, ScreenX auditoriums, and premium large format cinemas. Compare screen dimensions, aspect ratios, projection systems, seating capacity, theatre rankings, and nearby cinema experiences.
+          </p>
+          <p class="seo-subtext" style="font-size:0.8rem; color:var(--text-3); line-height:1.7;">
+            Whether you want to witness Dune Part Two on a 1.43:1 dual-laser GT Laser IMAX screen or compare Dolby Vision HDR with a Samsung Onyx LED Cinema Display, Filmetric acts as the definitive directory for premium theatre discovery. Compare visual specifications, audio systems, and seat counts before booking your next cinematic outing.
+          </p>
         </div>
       </section>`;
   }
@@ -1450,6 +1769,12 @@ document.addEventListener("DOMContentLoaded", () => {
               ${s.status || "Open"}
             </div>
             <div id="theatre-rating-summary-badge" class="status-badge" style="border-color:var(--border); color:var(--text-2); display:none;"></div>
+            <button id="favorite-toggle-btn" class="chip favorite-toggle-btn" style="height: auto; font-family: inherit; font-size: 0.65rem; padding: 0.35rem 0.85rem; border-radius: var(--r-full, 9999px); display: inline-flex; align-items: center; gap: 0.25rem; background: transparent; cursor: pointer; transition: all var(--t) var(--ease);">
+              <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="transition: fill var(--t) var(--ease);">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+              </svg>
+              <span>Save Screen</span>
+            </button>
           </div>
         </div>
 
@@ -1731,6 +2056,29 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("detail-submit-correction-btn")?.addEventListener("click", () => {
       showCorrectionModal(s.id);
     });
+
+    // Favorite Button listener
+    const favBtn = document.getElementById("favorite-toggle-btn");
+    if (favBtn) {
+      const isFav = getFavorites().includes(s.id);
+      if (isFav) {
+        favBtn.classList.add("active");
+        favBtn.querySelector("svg").setAttribute("fill", "currentColor");
+        favBtn.querySelector("span").textContent = "Saved";
+      }
+      favBtn.addEventListener("click", () => {
+        const active = toggleFavorite(s.id);
+        if (active) {
+          favBtn.classList.add("active");
+          favBtn.querySelector("svg").setAttribute("fill", "currentColor");
+          favBtn.querySelector("span").textContent = "Saved";
+        } else {
+          favBtn.classList.remove("active");
+          favBtn.querySelector("svg").setAttribute("fill", "none");
+          favBtn.querySelector("span").textContent = "Save Screen";
+        }
+      });
+    }
   }
 
   // ── NEAR ME VIEW ──────────────────────────────────────
@@ -1740,96 +2088,656 @@ document.addEventListener("DOMContentLoaded", () => {
       description: "Find the closest premium IMAX and Dolby Cinema screens sorted by real-time distance.",
       canonicalPath: "#/near-me"
     });
+
+    const cities = Array.from(new Set((window.DB.allScreens || []).filter(s => s.lat && s.lon).map(s => s.city))).sort();
+    const cityOptions = ['<option value="">All Cities</option>', ...cities.map(c => `<option value="${c}" ${nearMeCityFilter === c ? "selected" : ""}>${c}</option>`)].join("");
+    
     renderLayout(`
-      <div class="container">
-        <div class="nearme-page-header">
-          <div class="section-label">Location</div>
-          <h1 class="page-title">Best Screens Near You</h1>
-          <p class="page-subtitle" style="margin-top:0.5rem;">Showing IMAX screens with confirmed coordinates.</p>
+      <div class="nearme-split-layout">
+        <div id="nearme-map-panel"></div>
+        <div id="nearme-list-panel">
+          <div class="nearme-sidebar-header">
+            <h1 class="page-title" style="margin-bottom: 0.5rem; font-size: 1.5rem;">Best Screens Near You</h1>
+            <p class="page-subtitle" style="margin-bottom: 1rem; font-size: 0.8rem; line-height: 1.4;">
+              Discover and compare premium screens around you.
+            </p>
+            
+            <!-- Location Banner -->
+            <div id="nearme-location-banner" class="location-found" style="margin-bottom: 1rem; padding: 0.5rem 0.75rem; font-size: 0.75rem;">
+              <!-- Dynamic banner content -->
+            </div>
+            
+            <!-- Search & Filters -->
+            <div class="nearme-controls" style="display: flex; flex-direction: column; gap: 0.75rem;">
+              <input type="text" id="nearme-search-input" class="filter-search" placeholder="Search by name or city..." value="${nearMeSearchQuery}" style="width: 100%; font-size: 0.8rem; padding: 0.5rem 0.75rem;">
+              
+              <div style="display: flex; gap: 0.5rem; width: 100%;">
+                <select id="nearme-format-select" class="screens-filter-bar select" style="flex: 1; font-size: 0.75rem; padding: 0.4rem 0.5rem; height: 32px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: var(--r-md);">
+                  <option value="">All Formats</option>
+                  <option value="IMAX" ${nearMeFormatFilter === "IMAX" ? "selected" : ""}>IMAX</option>
+                  <option value="Dolby Cinema" ${nearMeFormatFilter === "Dolby Cinema" ? "selected" : ""}>Dolby Cinema</option>
+                  <option value="PLF" ${nearMeFormatFilter === "PLF" ? "selected" : ""}>PLF</option>
+                  <option value="ScreenX" ${nearMeFormatFilter === "ScreenX" ? "selected" : ""}>ScreenX</option>
+                  <option value="Samsung Onyx" ${nearMeFormatFilter === "Samsung Onyx" ? "selected" : ""}>Samsung Onyx</option>
+                  <option value="EPIQ" ${nearMeFormatFilter === "EPIQ" ? "selected" : ""}>EPIQ</option>
+                </select>
+
+                <select id="nearme-city-select" class="screens-filter-bar select" style="flex: 1; font-size: 0.75rem; padding: 0.4rem 0.5rem; height: 32px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: var(--r-md);">
+                  ${cityOptions}
+                </select>
+              </div>
+
+              <div style="display: flex; gap: 0.5rem; width: 100%;">
+                <select id="nearme-distance-select" class="screens-filter-bar select" style="flex: 1; font-size: 0.75rem; padding: 0.4rem 0.5rem; height: 32px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: var(--r-md);" ${!userCoords ? "disabled" : ""}>
+                  <option value="any" ${nearMeDistanceFilter === "any" ? "selected" : ""}>Any Distance</option>
+                  <option value="25" ${nearMeDistanceFilter === "25" ? "selected" : ""}>Within 25 km</option>
+                  <option value="50" ${nearMeDistanceFilter === "50" ? "selected" : ""}>Within 50 km</option>
+                  <option value="100" ${nearMeDistanceFilter === "100" ? "selected" : ""}>Within 100 km</option>
+                  <option value="250" ${nearMeDistanceFilter === "250" ? "selected" : ""}>Within 250 km</option>
+                </select>
+              </div>
+              
+              <div style="display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; color: var(--text-3); border-top: 1px solid var(--border); padding-top: 0.75rem; margin-top: 0.25rem;">
+                <span>Sort by</span>
+                <select id="nearme-sort-select" class="screens-filter-bar select" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; height: 26px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: var(--r-md); width: auto;">
+                  <option value="proximity" ${nearMeSortOption === "proximity" ? "selected" : ""}>Proximity</option>
+                  <option value="seats" ${nearMeSortOption === "seats" ? "selected" : ""}>Seats</option>
+                  <option value="screenSize" ${nearMeSortOption === "screenSize" ? "selected" : ""}>Screen Size</option>
+                  <option value="rating" ${nearMeSortOption === "rating" ? "selected" : ""}>Filmetric Score</option>
+                </select>
+              </div>
+            </div>
+            
+            <!-- Quick Filter Chips -->
+            <div class="nearme-quick-chips" style="display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.75rem;">
+              <button class="chip nearme-chip" data-quick="imax-near" style="padding: 0.25rem 0.65rem; font-size: 0.6rem; border-radius: 9999px;">IMAX Near Me</button>
+              <button class="chip nearme-chip" data-quick="dolby-near" style="padding: 0.25rem 0.65rem; font-size: 0.6rem; border-radius: 9999px;">Dolby Near Me</button>
+              <button class="chip nearme-chip" data-quick="largest" style="padding: 0.25rem 0.65rem; font-size: 0.6rem; border-radius: 9999px;">Largest Screens</button>
+              <button class="chip nearme-chip" data-quick="aspect-143" style="padding: 0.25rem 0.65rem; font-size: 0.6rem; border-radius: 9999px;">1.43:1 Screens</button>
+              <button class="chip nearme-chip" data-quick="top-rated" style="padding: 0.25rem 0.65rem; font-size: 0.6rem; border-radius: 9999px;">Top Rated</button>
+            </div>
+            
+            <!-- Results Summary -->
+            <div id="nearme-results-summary" style="font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-3); margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.75rem; line-height: 1.4;">
+              <!-- Dynamic summary will load here -->
+            </div>
+          </div>
+          <div class="nearme-sidebar-list" id="nearme-sidebar-list">
+            <!-- Cards will be populated here -->
+          </div>
         </div>
-        <div id="nearme-body"></div>
       </div>`, "nearme");
 
-    renderNearMeBody();
+    initNearMeControls();
+    initNearMeMap();
+    renderNearMeResults();
   }
 
-  function renderNearMeBody() {
-    const body = document.getElementById("nearme-body");
-    if (!body) return;
+  function initNearMeControls() {
+    const searchInput = document.getElementById("nearme-search-input");
+    const formatSelect = document.getElementById("nearme-format-select");
+    const distanceSelect = document.getElementById("nearme-distance-select");
+    const citySelect = document.getElementById("nearme-city-select");
+    const sortSelect = document.getElementById("nearme-sort-select");
 
-    // Only Indian IMAX screens have lat/lon
-    const geoScreens = window.DB.indianImax
-      .filter(r => r.lat && r.long)
-      .map(r => fromIndianImax(r));
+    searchInput?.addEventListener("input", (e) => {
+      nearMeSearchQuery = e.target.value.trim();
+      document.querySelectorAll(".nearme-chip").forEach(c => c.classList.remove("active"));
+      nearMeQuickFilter = "";
+      renderNearMeResults();
+    });
 
-    if (geoScreens.length === 0) {
-      body.innerHTML = noDataHtml("No screens with location data found.");
-      return;
+    formatSelect?.addEventListener("change", (e) => {
+      nearMeFormatFilter = e.target.value;
+      document.querySelectorAll(".nearme-chip").forEach(c => c.classList.remove("active"));
+      nearMeQuickFilter = "";
+      renderNearMeResults();
+    });
+
+    distanceSelect?.addEventListener("change", (e) => {
+      nearMeDistanceFilter = e.target.value;
+      document.querySelectorAll(".nearme-chip").forEach(c => c.classList.remove("active"));
+      nearMeQuickFilter = "";
+      renderNearMeResults();
+    });
+
+    citySelect?.addEventListener("change", (e) => {
+      nearMeCityFilter = e.target.value;
+      document.querySelectorAll(".nearme-chip").forEach(c => c.classList.remove("active"));
+      nearMeQuickFilter = "";
+      renderNearMeResults();
+    });
+
+    sortSelect?.addEventListener("change", (e) => {
+      nearMeSortOption = e.target.value;
+      document.querySelectorAll(".nearme-chip").forEach(c => c.classList.remove("active"));
+      nearMeQuickFilter = "";
+      renderNearMeResults();
+    });
+
+    document.querySelectorAll(".nearme-chip").forEach(chip => {
+      chip.addEventListener("click", () => {
+        const isActive = chip.classList.contains("active");
+        document.querySelectorAll(".nearme-chip").forEach(c => c.classList.remove("active"));
+        if (!isActive) {
+          chip.classList.add("active");
+          applyQuickFilter(chip.dataset.quick);
+        } else {
+          clearQuickFilter();
+        }
+      });
+    });
+  }
+
+  function getMarkerColor(format) {
+    const f = (format || "").toUpperCase();
+    if (f.includes("IMAX")) return "#0055ff"; // Electric Blue
+    if (f.includes("DOLBY")) return "#ff9f00"; // Amber
+    if (f.includes("PLF") || f.includes("PXL")) return "#ffffff"; // White
+    if (f.includes("ONYX")) return "#b800ff"; // Purple
+    if (f.includes("SCREENX") || f.includes("SCREEN X")) return "#00f2fe"; // Cyan
+    if (f.includes("EPIQ")) return "#00e676"; // Green
+    return "#8b949e"; // Grey
+  }
+
+  function getFormatCode(format) {
+    const f = (format || "").toUpperCase();
+    if (f.includes("IMAX")) return "IMAX";
+    if (f.includes("DOLBY")) return "DOLBY";
+    if (f.includes("PLF") || f.includes("PXL")) return "PLF";
+    if (f.includes("ONYX")) return "ONYX";
+    if (f.includes("SCREENX") || f.includes("SCREEN X")) return "SCX";
+    if (f.includes("EPIQ")) return "EPIQ";
+    return "SCRN";
+  }
+
+  function createMarkerIcon(color, text, isSelected) {
+    return L.divIcon({
+      html: `
+        <div class="custom-map-marker ${isSelected ? 'selected' : ''}" style="border: 1.5px solid ${color}; color: ${color};">
+          <span class="marker-format-label">${text}</span>
+        </div>
+      `,
+      className: "",
+      iconSize: [34, 34],
+      iconAnchor: [17, 17],
+      popupAnchor: [0, -17]
+    });
+  }
+
+  function initNearMeMap() {
+    if (nearMeMap) {
+      try {
+        nearMeMap.remove();
+      } catch (e) {
+        console.error("Error removing old map instance:", e);
+      }
+      nearMeMap = null;
     }
 
-    if (!userCoords) {
-      body.innerHTML = `
-        <div class="location-prompt">
-          <div class="location-prompt-title">Allow Location Access</div>
-          <p class="location-prompt-sub">Filmetric uses your location to rank IMAX screens by proximity.</p>
-          <button class="btn btn-primary" id="enable-location-btn">Enable Location</button>
-        </div>`;
+    const mapEl = document.getElementById("nearme-map-panel");
+    if (!mapEl) return;
 
-      document.getElementById("enable-location-btn")?.addEventListener("click", () => {
-        body.innerHTML = `<div class="location-prompt"><p style="color:var(--text-2);font-size:0.875rem;">Finding your location...</p></div>`;
+    // Default center Bengaluru
+    const defaultCenter = [12.9716, 77.5946];
+    const defaultZoom = 5;
+
+    nearMeMap = L.map("nearme-map-panel", {
+      zoomControl: false,
+      attributionControl: false
+    }).setView(defaultCenter, defaultZoom);
+
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      maxZoom: 19
+    }).addTo(nearMeMap);
+
+    L.control.zoom({ position: "topright" }).addTo(nearMeMap);
+  }
+
+  function updateLocationBanner() {
+    const banner = document.getElementById("nearme-location-banner");
+    if (!banner) return;
+    
+    if (!userCoords) {
+      banner.className = "location-prompt-banner";
+      banner.style.cssText = "display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem; background: rgba(228, 213, 188, 0.05); border: 1px solid rgba(228, 213, 188, 0.15); border-radius: var(--r-sm); color: var(--text-2); font-size: 0.75rem; line-height: 1.4; margin-bottom: 1rem;";
+      banner.innerHTML = `
+        <span style="flex: 1;">Enable location to rank screens by proximity and unlock personalized recommendations.</span>
+        <button id="nearme-enable-loc" class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.7rem; height: auto;">Enable</button>
+      `;
+      
+      document.getElementById("nearme-enable-loc")?.addEventListener("click", () => {
+        banner.innerHTML = `<span style="color:var(--text-3);">Finding your location...</span>`;
         navigator.geolocation.getCurrentPosition(
           pos => {
             userCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-            renderNearMeResults(body, geoScreens);
+            const distSelect = document.getElementById("nearme-distance-select");
+            if (distSelect) distSelect.removeAttribute("disabled");
+            updateLocationBanner();
+            if (nearMeMap) {
+              nearMeMap.setView([userCoords.lat, userCoords.lon], 11);
+            }
+            renderNearMeResults();
           },
           () => {
-            body.innerHTML = `
-              <div class="location-prompt">
-                <div class="location-prompt-title">Location Denied</div>
-                <p class="location-prompt-sub">Enable location in browser settings to use this feature.</p>
-                <a href="#/screens" class="btn btn-ghost">Browse All Screens</a>
-              </div>`;
+            banner.innerHTML = `<span style="color:#ff7b72;">Location denied. Please enable in browser settings.</span>`;
+            setTimeout(() => {
+              updateLocationBanner();
+            }, 3000);
           }
         );
       });
     } else {
-      renderNearMeResults(body, geoScreens);
+      banner.className = "location-found";
+      banner.style.cssText = "display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text-2); font-size: 0.75rem; margin-bottom: 1rem;";
+      banner.innerHTML = `
+        <div class="location-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #58a6ff; box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.5); animation: pulse 2s infinite;"></div>
+        <span>Location active — ${userCoords.lat.toFixed(4)}N, ${userCoords.lon.toFixed(4)}E</span>
+        <button id="nearme-refresh-loc" class="btn btn-ghost btn-sm" style="margin-left:auto; font-size:0.7rem; padding: 2px 8px; height: auto;">Refresh</button>
+      `;
+      
+      document.getElementById("nearme-refresh-loc")?.addEventListener("click", () => {
+        userCoords = null;
+        const distSelect = document.getElementById("nearme-distance-select");
+        if (distSelect) {
+          distSelect.value = "any";
+          distSelect.setAttribute("disabled", "true");
+        }
+        nearMeDistanceFilter = "any";
+        updateLocationBanner();
+        if (nearMeMap) {
+          nearMeMap.setView([12.9716, 77.5946], 5);
+        }
+        renderNearMeResults();
+      });
     }
   }
 
-  function renderNearMeResults(container, geoScreens) {
-    const sorted = geoScreens
-      .map(s => ({ ...s, dist: haversine(userCoords.lat, userCoords.lon, s.lat, s.lon) }))
-      .sort((a, b) => a.dist - b.dist);
+  let activeMarkersMap = {};
 
-    const cards = sorted.map((s, i) => {
-      const distStr = s.dist < 1 ? `${Math.round(s.dist * 1000)} m` : `${s.dist.toFixed(1)} km`;
-      return `
-        <a href="#/screen/${s.id}" class="nearme-screen-card">
-          <span class="nearme-card-rank">${String(i + 1).padStart(2, "0")}</span>
-          <div class="nearme-card-body">
-            <div class="nearme-card-name">${s.name}</div>
-            <div class="nearme-card-location">${s.city}${s.aspectRatio ? " · " + s.aspectRatio : ""}</div>
+  function updateMapMarkers(screens) {
+    if (!nearMeMap) return;
+
+    if (nearMeMarkersGroup) {
+      nearMeMap.removeLayer(nearMeMarkersGroup);
+    }
+
+    nearMeMarkersGroup = L.markerClusterGroup({
+      showCoverageOnHover: false,
+      maxClusterRadius: 50
+    });
+
+    activeMarkersMap = {};
+    const bounds = L.latLngBounds();
+
+    screens.forEach((s, index) => {
+      const color = getMarkerColor(s.format);
+      const label = getFormatCode(s.format);
+      const isSelected = (s.id === selectedScreenId);
+      
+      const popupHtml = `
+        <div style="font-family: var(--font-sans); color: var(--text); padding: 4px; min-width: 180px;">
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: ${color}; text-transform: uppercase; font-weight: bold; margin-bottom: 4px;">
+            ${s.format}
           </div>
-          <span class="nearme-card-format">${(s.projection || "IMAX").split(" ").slice(0, 2).join(" ")}</span>
-          <span class="nearme-card-dist">${distStr}</span>
-        </a>`;
+          <div style="font-size: 0.9rem; font-weight: bold; margin-bottom: 2px; line-height: 1.2; color: #fff;">
+            ${s.name}
+          </div>
+          <div style="font-size: 0.75rem; color: var(--text-2); margin-bottom: 6px;">
+            ${s.city}
+          </div>
+          <div style="font-size: 0.7rem; color: var(--text-3); margin-bottom: 8px; line-height: 1.4;">
+            ${s.aspectRatio ? `Aspect: ${s.aspectRatio}<br>` : ''}
+            ${s.seats ? `Seats: ${s.seats}<br>` : ''}
+            ${s.projection ? `Projection: ${s.projection}` : ''}
+          </div>
+          <a href="#/screen/${s.id}" class="btn btn-primary" style="display: block; text-align: center; font-size: 0.7rem; padding: 4px 8px; text-decoration: none; border-radius: var(--r-sm); color: var(--text-inv); font-weight: 500;">
+            View Details
+          </a>
+        </div>
+      `;
+
+      const marker = L.marker([s.lat, s.lon], {
+        icon: createMarkerIcon(color, label, isSelected)
+      }).bindPopup(popupHtml, {
+        maxWidth: 220,
+        className: "custom-leaflet-popup"
+      });
+
+      marker.on("click", () => {
+        highlightSidebarCard(s.id);
+        scrollSidebarCardIntoView(s.id);
+        selectScreenMarker(s.id);
+      });
+
+      marker.on("popupopen", () => {
+        highlightSidebarCard(s.id);
+        scrollSidebarCardIntoView(s.id);
+        selectScreenMarker(s.id);
+      });
+
+      marker.on("mouseover", () => {
+        highlightSidebarCard(s.id);
+      });
+
+      nearMeMarkersGroup.addLayer(marker);
+      activeMarkersMap[s.id] = marker;
+      bounds.extend([s.lat, s.lon]);
+    });
+
+    nearMeMap.addLayer(nearMeMarkersGroup);
+
+    if (userCoords) {
+      const userMarkerHtml = `
+        <div class="user-location-marker"></div>
+      `;
+      const userIcon = L.divIcon({
+        html: userMarkerHtml,
+        className: "",
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
+      });
+
+      const userMarker = L.marker([userCoords.lat, userCoords.lon], { icon: userIcon });
+      userMarker.bindPopup(`<div style="font-size:0.75rem; font-weight:bold; text-align:center; color: #fff;">You are here</div>`);
+      nearMeMarkersGroup.addLayer(userMarker);
+    }
+
+    if (screens.length > 0) {
+      if (nearMeCityFilter) {
+        nearMeMap.fitBounds(bounds, { padding: [40, 40] });
+      } else if (userCoords) {
+        nearMeMap.setView([userCoords.lat, userCoords.lon], 11);
+      } else {
+        nearMeMap.fitBounds(bounds, { padding: [40, 40] });
+      }
+    } else if (userCoords) {
+      nearMeMap.setView([userCoords.lat, userCoords.lon], 11);
+    }
+  }
+
+  function findMarkerByScreenId(id) {
+    return activeMarkersMap[id] || null;
+  }
+
+  function highlightSidebarCard(id) {
+    document.querySelectorAll(".nearme-list-card").forEach(c => c.classList.remove("highlighted"));
+    const card = document.getElementById(`nearme-card-${id}`);
+    if (card) {
+      card.classList.add("highlighted");
+    }
+  }
+
+  function selectScreenMarker(screenId) {
+    if (selectedScreenId) {
+      const prevMarker = findMarkerByScreenId(selectedScreenId);
+      if (prevMarker && prevMarker._icon) {
+        prevMarker._icon.querySelector(".custom-map-marker")?.classList.remove("selected");
+      }
+    }
+    selectedScreenId = screenId;
+    if (selectedScreenId) {
+      const nextMarker = findMarkerByScreenId(selectedScreenId);
+      if (nextMarker && nextMarker._icon) {
+        nextMarker._icon.querySelector(".custom-map-marker")?.classList.add("selected");
+      }
+    }
+  }
+
+  function scrollSidebarCardIntoView(id) {
+    const card = document.getElementById(`nearme-card-${id}`);
+    const list = document.getElementById("nearme-sidebar-list");
+    if (card && list) {
+      const offsetTop = card.offsetTop - list.offsetTop;
+      list.scrollTo({
+        top: offsetTop - 10,
+        behavior: "smooth"
+      });
+    }
+  }
+
+  function calculateFilmetricScore(s) {
+    let score = 40;
+    
+    // 1. Aspect Ratio (Max 25 pts)
+    const ar = (s.aspectRatio || "").trim();
+    if (ar === "1.43:1" || ar.includes("1.43")) score += 25;
+    else if (ar === "1.90:1" || ar.includes("1.90")) score += 15;
+    else score += 5;
+
+    // 2. Projection Tech (Max 25 pts)
+    const proj = (s.projection || "").toUpperCase();
+    if (proj.includes("DUAL LASER") || proj.includes("GT LASER") || proj.includes("GT")) score += 25;
+    else if (proj.includes("LASER") || proj.includes("XT LASER") || proj.includes("COMMERCIAL LASER")) score += 18;
+    else if (proj.includes("XENON") || proj.includes("DIGITAL")) score += 8;
+    else score += 12;
+
+    // 3. Screen Dimensions / Size (Max 35 pts)
+    if (s.widthFt && s.heightFt) {
+      const area = s.widthFt * s.heightFt;
+      if (area > 5000) score += 35;
+      else if (area > 3000) score += 25;
+      else if (area > 1500) score += 15;
+      else score += 10;
+    } else if (s.widthFt) {
+      if (s.widthFt > 90) score += 30;
+      else if (s.widthFt > 70) score += 20;
+      else score += 10;
+    } else {
+      const fmt = (s.format || "").toUpperCase();
+      if (fmt.includes("IMAX") || fmt.includes("PLF")) score += 18;
+      else score += 10;
+    }
+
+    // 4. Seating (Max 10 pts)
+    if (s.seats) {
+      if (s.seats > 500) score += 10;
+      else if (s.seats > 300) score += 7;
+      else if (s.seats > 150) score += 4;
+      else score += 2;
+    } else {
+      score += 5;
+    }
+
+    return Math.min(99, score);
+  }
+
+  function renderNearMeResults() {
+    updateLocationBanner();
+
+    const sidebarList = document.getElementById("nearme-sidebar-list");
+    const summaryEl = document.getElementById("nearme-results-summary");
+    if (!sidebarList) return;
+
+    let screens = (window.DB.allScreens || [])
+      .filter(s => s.lat && s.lon);
+
+    // Apply manual search query (name or city)
+    if (nearMeSearchQuery) {
+      const q = nearMeSearchQuery.toLowerCase();
+      screens = screens.filter(s => 
+        (s.name || "").toLowerCase().includes(q) || 
+        (s.city || "").toLowerCase().includes(q)
+      );
+    }
+
+    // Apply manual format filter
+    if (nearMeFormatFilter) {
+      screens = screens.filter(s => {
+        const fmt = (s.format || "").toUpperCase();
+        const filt = nearMeFormatFilter.toUpperCase();
+        if (filt === "IMAX") return fmt.includes("IMAX");
+        if (filt === "DOLBY CINEMA") return fmt.includes("DOLBY");
+        return fmt === filt;
+      });
+    }
+
+    // Apply City filter
+    if (nearMeCityFilter) {
+      screens = screens.filter(s => s.city === nearMeCityFilter);
+    }
+
+    // Apply Quick Filters
+    if (nearMeQuickFilter === "aspect-143") {
+      screens = screens.filter(s => (s.aspectRatio || "").includes("1.43"));
+    }
+
+    // Calculate Filmetric Score for all screens
+    screens = screens.map(s => ({ ...s, score: calculateFilmetricScore(s) }));
+
+    // Calculate distances
+    if (userCoords) {
+      screens = screens.map(s => {
+        const dist = haversine(userCoords.lat, userCoords.lon, s.lat, s.lon);
+        const travelTimeMin = Math.round((dist / 45) * 60);
+        return { ...s, dist, travelTimeMin };
+      });
+
+      if (nearMeDistanceFilter && nearMeDistanceFilter !== "any") {
+        const maxDist = parseFloat(nearMeDistanceFilter);
+        screens = screens.filter(s => s.dist <= maxDist);
+      }
+    } else {
+      screens = screens.map(s => ({ ...s, dist: null, travelTimeMin: null }));
+    }
+
+    // Sort Results
+    if (nearMeSortOption === "proximity" && userCoords) {
+      screens.sort((a, b) => (a.dist || Infinity) - (b.dist || Infinity));
+    } else if (nearMeSortOption === "seats") {
+      screens.sort((a, b) => (b.seats || 0) - (a.seats || 0));
+    } else if (nearMeSortOption === "screenSize") {
+      screens.sort((a, b) => (b.area || 0) - (a.area || 0));
+    } else if (nearMeSortOption === "rating") {
+      screens.sort((a, b) => (b.score || 0) - (a.score || 0));
+    } else {
+      // Default: Proximity if location enabled, else Filmetric Score descending
+      if (userCoords) {
+        screens.sort((a, b) => (a.dist || Infinity) - (b.dist || Infinity));
+      } else {
+        screens.sort((a, b) => (b.score || 0) - (a.score || 0));
+      }
+    }
+
+    updateMapMarkers(screens);
+
+    if (summaryEl) {
+      const totalCount = screens.length;
+      const distinctCitiesCount = new Set(screens.map(s => s.city)).size;
+      const maxSeatsValue = Math.max(...screens.map(s => s.seats || 0), 0);
+      
+      let filterDesc = "All Formats";
+      if (nearMeFormatFilter) filterDesc = `${nearMeFormatFilter} Only`;
+      else if (nearMeQuickFilter === "imax-near") filterDesc = "IMAX Only";
+      else if (nearMeQuickFilter === "dolby-near") filterDesc = "Dolby Only";
+      else if (nearMeQuickFilter === "aspect-143") filterDesc = "1.43:1 Aspect Only";
+
+      summaryEl.innerHTML = `
+        <span style="color: var(--white); font-weight: 600;">${totalCount} Screens</span> • 
+        <span>${distinctCitiesCount} Cities</span> • 
+        <span>${maxSeatsValue > 0 ? maxSeatsValue.toLocaleString() + ' Max Seats' : 'Seats Confirmed'}</span> • 
+        <span style="color: var(--cream); font-weight: 600;">${filterDesc}</span>
+      `;
+    }
+
+    if (screens.length === 0) {
+      sidebarList.innerHTML = `
+        <div class="empty-state" style="padding: 3rem 1rem;">
+          <div class="empty-state-title" style="font-size: 0.95rem;">No Screens Found</div>
+          <div class="empty-state-sub" style="font-size: 0.75rem; margin-top: 0.25rem;">Try adjusting your filters or quick chips.</div>
+        </div>
+      `;
+      return;
+    }
+
+    sidebarList.innerHTML = screens.map((s, index) => {
+      const rankStr = `#${String(index + 1).padStart(2, "0")}`;
+      const fClass = (s.format || "").toLowerCase().replace(/\s+/g, "-");
+      
+      let distanceStr = "";
+      if (userCoords && s.dist !== null) {
+        const distVal = s.dist < 1 ? `${Math.round(s.dist * 1000)}m` : `${s.dist.toFixed(1)}km`;
+        distanceStr = ` • ${distVal}`;
+      }
+
+      let dimensionsStr = "—";
+      if (s.widthFt && s.heightFt) {
+        dimensionsStr = `${s.widthFt}×${s.heightFt} ft`;
+      } else if (s.widthFt) {
+        dimensionsStr = `${s.widthFt} ft wide`;
+      } else if (s.screenSize) {
+        dimensionsStr = s.screenSize;
+      }
+
+      const specs = [];
+      if (s.aspectRatio) specs.push(s.aspectRatio);
+      if (dimensionsStr && dimensionsStr !== "—") specs.push(dimensionsStr);
+      if (s.seats) specs.push(`${s.seats.toLocaleString()} seats`);
+      const specsLine = specs.join(" • ");
+
+      return `
+        <div class="nearme-list-card" id="nearme-card-${s.id}" data-id="${s.id}">
+          <div class="card-meta-row" style="margin-bottom: 0.4rem; display: flex; justify-content: space-between; align-items: center;">
+            <span class="format-badge format-${fClass}">
+              ${s.format}
+            </span>
+            <span class="card-rank-badge" style="font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--text-3); font-weight: 600;">
+              ${rankStr}${distanceStr}
+            </span>
+          </div>
+          
+          <h4 class="card-theatre-name" style="margin-bottom: 0.15rem; font-size: 1rem; font-family: 'Playfair Display', Georgia, serif; line-height: 1.25; color: var(--white);">${s.name}</h4>
+          <div class="card-city-name" style="margin-bottom: 0.5rem; font-size: 0.72rem; color: #b0b0b0;">${s.city}</div>
+          
+          <div class="card-specs-line" style="font-size: 0.72rem; line-height: 1.4; color: var(--text-2); margin-bottom: 0.6rem;">
+            ${specsLine ? `<div>${specsLine}</div>` : ''}
+            ${s.projection ? `<div style="color: var(--text-3); font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; margin-top: 0.15rem;">${s.projection}</div>` : ''}
+          </div>
+          
+          <div class="card-actions" style="display: flex; gap: 0.4rem;">
+            <a href="#/screen/${s.id}" class="btn-card-action view-details-btn" style="height: 24px; line-height: 22px; font-size: 0.65rem;">View Details</a>
+            <a href="https://www.google.com/maps?q=${s.lat},${s.lon}" target="_blank" class="btn-card-action directions-btn" style="height: 24px; line-height: 22px; font-size: 0.65rem; display: inline-flex; align-items: center; justify-content: center; gap: 4px;">
+              <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/><circle cx="12" cy="10" r="3"/>
+              </svg>
+              Directions
+            </a>
+          </div>
+        </div>
+      `;
     }).join("");
 
-    container.innerHTML = `
-      <div class="location-found">
-        <div class="location-dot"></div>
-        <span>Location active — ${userCoords.lat.toFixed(4)}N, ${userCoords.lon.toFixed(4)}E</span>
-        <button class="btn btn-ghost btn-sm" id="refresh-location" style="margin-left:auto;">Refresh</button>
-      </div>
-      <p style="font-size:0.75rem;color:var(--text-3);margin-bottom:1.25rem;">
-        Showing ${sorted.length} IMAX screens with confirmed coordinates.
-      </p>
-      ${cards}`;
+    sidebarList.querySelectorAll(".nearme-list-card").forEach(card => {
+      const id = card.dataset.id;
+      const screen = screens.find(s => s.id === id);
 
-    document.getElementById("refresh-location")?.addEventListener("click", () => {
-      userCoords = null;
-      renderNearMeBody();
+      card.addEventListener("click", (e) => {
+        if (e.target.closest("a")) return;
+        
+        if (screen && nearMeMap) {
+          nearMeMap.flyTo([screen.lat, screen.lon], 14, { animate: true, duration: 1.5 });
+          const marker = findMarkerByScreenId(id);
+          if (marker) {
+            marker.openPopup();
+          }
+          highlightSidebarCard(id);
+          selectScreenMarker(id);
+        }
+      });
+
+      card.addEventListener("mouseenter", () => {
+        const marker = findMarkerByScreenId(id);
+        if (marker && marker._icon) {
+          marker._icon.querySelector(".custom-map-marker")?.classList.add("hovered");
+        }
+      });
+
+      card.addEventListener("mouseleave", () => {
+        const marker = findMarkerByScreenId(id);
+        if (marker && marker._icon) {
+          marker._icon.querySelector(".custom-map-marker")?.classList.remove("hovered");
+        }
+      });
     });
   }
 
@@ -2212,7 +3120,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const hash = window.location.hash || "#/";
     const qi = hash.indexOf("?");
     const qp = qi !== -1 ? new URLSearchParams(hash.substring(qi)) : new URLSearchParams();
-    const activeTab = qp.get("tab") || "reviews";
+    const activeTab = qp.get("tab") || "favorites";
 
     const initials = (currentUser.username || "?").substring(0, 2).toUpperCase();
     const avatar = currentUser.avatarUrl
@@ -2237,6 +3145,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
         <div class="stats-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:1rem; margin-bottom:2rem;" id="profile-stats-container">
           <div class="specs-card" style="padding:1.25rem; text-align:center;">
+            <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-family:'JetBrains Mono', monospace; margin-bottom:0.25rem;">Saved</div>
+            <div style="font-size:1.8rem; font-weight:600; color:var(--text);" id="stats-favorites-count">0</div>
+          </div>
+          <div class="specs-card" style="padding:1.25rem; text-align:center;">
             <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-family:'JetBrains Mono', monospace; margin-bottom:0.25rem;">Reviews</div>
             <div style="font-size:1.8rem; font-weight:600; color:var(--text);" id="stats-reviews-count">0</div>
           </div>
@@ -2255,6 +3167,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
 
         <div class="modal-tabs" style="margin-bottom:2rem;">
+          <a href="#/profile?tab=favorites" class="modal-tab ${activeTab === 'favorites' ? 'active' : ''}" style="text-decoration:none; text-align:center; display:block; padding:0.75rem 0;">Saved Screens</a>
           <a href="#/profile?tab=reviews" class="modal-tab ${activeTab === 'reviews' ? 'active' : ''}" style="text-decoration:none; text-align:center; display:block; padding:0.75rem 0;">Reviews</a>
           <a href="#/profile?tab=contributions" class="modal-tab ${activeTab === 'contributions' ? 'active' : ''}" style="text-decoration:none; text-align:center; display:block; padding:0.75rem 0;">Photos & Corrections</a>
           <a href="#/profile?tab=submissions" class="modal-tab ${activeTab === 'submissions' ? 'active' : ''}" style="text-decoration:none; text-align:center; display:block; padding:0.75rem 0;">Missing Screens</a>
@@ -2270,11 +3183,14 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("profile-edit-btn")?.addEventListener("click", showEditProfileModal);
 
     fetchUserContributions(currentUser.id).then(data => {
+      const favsCount = document.getElementById("stats-favorites-count");
       const reviewsCount = document.getElementById("stats-reviews-count");
       const photosCount = document.getElementById("stats-photos-count");
       const correctionsCount = document.getElementById("stats-corrections-count");
       const submissionsCount = document.getElementById("stats-submissions-count");
 
+      const favsList = getFavorites();
+      if (favsCount) favsCount.textContent = favsList.length;
       if (reviewsCount) reviewsCount.textContent = data.reviews.length;
       if (photosCount) photosCount.textContent = data.photos.length;
       if (correctionsCount) correctionsCount.textContent = data.corrections.length;
@@ -2283,7 +3199,30 @@ document.addEventListener("DOMContentLoaded", () => {
       const contentEl = document.getElementById("profile-tab-content");
       if (!contentEl) return;
 
-      if (activeTab === "reviews") {
+      if (activeTab === "favorites") {
+        if (favsList.length === 0) {
+          contentEl.innerHTML = `
+            <div style="text-align:center; padding:3rem 1.5rem; color:var(--text-3); font-size:0.875rem;">
+              You have no saved screens yet.
+            </div>`;
+        } else {
+          const intl = window.DB.intlImax.map(r => fromIntlImax(r));
+          const all = [...window.DB.allScreens, ...intl];
+          const favScreens = favsList.map(id => all.find(s => s.id === id)).filter(Boolean);
+          
+          if (favScreens.length === 0) {
+            contentEl.innerHTML = `
+              <div style="text-align:center; padding:3rem 1.5rem; color:var(--text-3); font-size:0.875rem;">
+                You have no saved screens yet.
+              </div>`;
+          } else {
+            contentEl.innerHTML = `
+              <div class="screens-list-grid">
+                ${favScreens.map(s => screenCardHtml(s)).join("")}
+              </div>`;
+          }
+        }
+      } else if (activeTab === "reviews") {
         if (data.reviews.length === 0) {
           contentEl.innerHTML = `
             <div style="text-align:center; padding:3rem 1.5rem; color:var(--text-3); font-size:0.875rem;">
