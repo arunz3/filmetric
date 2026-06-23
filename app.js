@@ -250,33 +250,36 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const [ii, plf, os, intl, mt] = await Promise.all([
+      const [ii, plf, os, intl] = await Promise.all([
         sbFetch("indian_imax"),
         sbFetch("plfs"),
         sbFetch("other_screens"),
         sbFetch("international_imax"),
-        sbFetch("movie_theater"),
       ]);
+
+      // Fetch movie_theater separately — table may not exist yet, so don't let it block the main load
+      let mt = [];
+      try { mt = await sbFetch("movie_theater") || []; } catch(e) { console.warn("movie_theater fetch failed:", e.message); }
 
       window.DB.indianImax    = ii   || [];
       window.DB.plfs          = plf  || [];
       window.DB.otherScreens  = os   || [];
       window.DB.intlImax      = intl || [];
-      window.DB.movieTheaters = mt   || [];
+      window.DB.movieTheaters = mt;
 
       // Log: table counts
       console.log("indian_imax count:", ii ? ii.length : 0);
       console.log("plfs count:", plf ? plf.length : 0);
       console.log("other_screens count:", os ? os.length : 0);
       console.log("international_imax count:", intl ? intl.length : 0);
-      console.log("movie_theater count:", mt ? mt.length : 0);
+      console.log("movie_theater count:", mt.length);
 
       // Build unified allScreens (India only, for main browse)
       const mapped = [
         ...ii.map(r  => fromIndianImax(r)),
         ...plf.map(r => fromPlf(r)),
         ...os.map(r  => fromOtherScreen(r)),
-        ...(mt || []).map(r => fromMovieTheater(r)),
+        ...mt.map(r  => fromMovieTheater(r)),
       ];
       window.DB.allScreens = mapped;
 
@@ -286,7 +289,7 @@ document.addEventListener("DOMContentLoaded", () => {
       // Output all unique format values
       console.log("Unique formats:", new Set(mapped.map(s => s.format)));
 
-      console.log(`Filmetric: Loaded ${ii.length} Indian IMAX + ${plf.length} PLFs + ${os.length} other screens + ${intl.length} international IMAX + ${(mt||[]).length} movie theaters.`);
+      console.log(`Filmetric: Loaded ${ii.length} Indian IMAX + ${plf.length} PLFs + ${os.length} other screens + ${intl.length} international IMAX + ${mt.length} movie theaters.`);
     } catch (e) {
       console.error("Filmetric: Data load failed —", e.message);
     }
