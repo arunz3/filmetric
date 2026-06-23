@@ -660,8 +660,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let userCoords = null;
   let screensSearchQuery = "";
   let screensFormatFilter = "";
+  let screensCityFilter = "";
+  let screensSortOption = "default";
   let screensPage = 1;
-  const SCREENS_PER_PAGE = 18;
+  const SCREENS_PER_PAGE = 30;
   let selectedMovie = null;
 
   // Near Me & Favorites State
@@ -1582,36 +1584,95 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderScreensView() {
     setMeta({
-      title: "Browse Cinema Screens | Filmetric",
-      description: "Browse the database of premium movie screens, IMAX, Dolby Cinema, and PLF auditoriums across India.",
+      title: "Browse Premium Cinema Screens — IMAX, Dolby, PLF | Filmetric",
+      description: "Explore the complete database of IMAX, Dolby Cinema, Samsung Onyx, ScreenX, and PLF premium cinema screens across India. Filter by city, format, and sort by screen size.",
       canonicalPath: "#/screens"
     });
     screensPage = 1;
+
+    // Build distinct formats for format chips
     const formats = getDistinctFormats();
-    const chips = formats.map(f => `
-      <button class="chip${screensFormatFilter === (f === "All" ? "" : f) ? " active" : ""}"
+    const chips = formats.map(f =>
+      `<button class="chip${screensFormatFilter === (f === "All" ? "" : f) ? " active" : ""}"
         data-format="${f === "All" ? "" : f}">${f}</button>`
     ).join("");
 
+    // Build distinct city list
+    const cities = [...new Set(window.DB.allScreens.map(s => s.city).filter(Boolean))].sort();
+    const cityOptions = cities.map(c =>
+      `<option value="${c}"${screensCityFilter === c ? " selected" : ""}>${c}</option>`
+    ).join("");
+
     const total = window.DB.allScreens.length;
+
     const html = `
-      <div class="container">
-        <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem;">
-          <div>
-            <h1 class="page-title" style="margin:0;">Screens</h1>
-            <div class="page-subtitle" style="margin-top:0.25rem;">${total > 0 ? `${total} screens in database` : "No data — check Settings"}</div>
+      <div class="screens-page-wrapper">
+        <!-- Page Header -->
+        <div class="container">
+          <div class="screens-page-header">
+            <div class="screens-page-header-left">
+              <h1 class="page-title" style="margin:0;">Screens</h1>
+              <div class="page-subtitle" id="screens-result-count">
+                ${total > 0 ? `${total} screens in database` : "No data — check Settings"}
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="submit-missing-screen-btn">
+              <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right:0.35rem;"><path d="M12 5v14M5 12h14"/></svg>
+              Submit Screen
+            </button>
           </div>
-          <button class="btn btn-primary btn-sm" id="submit-missing-screen-btn">Submit Missing Screen</button>
         </div>
-        <div class="filter-bar">
-          <input type="text" class="filter-search" id="screens-search"
-            placeholder="Search by name, city, format..." value="${screensSearchQuery}">
-          <div class="filter-chips" id="format-chips">${chips}</div>
+
+        <!-- Filter Bar -->
+        <div class="screens-sticky-bar">
+          <div class="container">
+            <div class="screens-filter-row">
+              <!-- Search -->
+              <div class="screens-search-wrap">
+                <svg class="screens-search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input type="text" class="screens-search-input" id="screens-search"
+                  placeholder="Search name, city, format…" value="${screensSearchQuery}">
+              </div>
+
+              <!-- City Dropdown -->
+              <select class="screens-select" id="screens-city-select">
+                <option value="">All Cities</option>
+                ${cityOptions}
+              </select>
+
+              <!-- Sort -->
+              <select class="screens-select" id="screens-sort-select">
+                <option value="default"${screensSortOption === "default" ? " selected" : ""}>Sort: Default</option>
+                <option value="largest"${screensSortOption === "largest" ? " selected" : ""}>Largest Screen</option>
+                <option value="seats"${screensSortOption === "seats" ? " selected" : ""}>Most Seats</option>
+                <option value="aspect"${screensSortOption === "aspect" ? " selected" : ""}>Aspect Ratio</option>
+                <option value="az"${screensSortOption === "az" ? " selected" : ""}>A → Z</option>
+              </select>
+            </div>
+
+            <!-- Format chips -->
+            <div class="filter-chips screens-chips" id="format-chips">${chips}</div>
+          </div>
         </div>
-        <div class="results-count" id="results-count"></div>
-        <div class="screens-list-grid" id="screens-grid"></div>
-        <div class="load-more-wrap" id="load-more-wrap">
-          <button class="btn btn-ghost" id="load-more-btn">Load more</button>
+
+        <!-- Results -->
+        <div class="container">
+          <div class="screens-results-area" id="screens-grid"></div>
+          <div class="load-more-wrap" id="load-more-wrap">
+            <button class="btn btn-ghost" id="load-more-btn">Load more screens</button>
+          </div>
+
+          <!-- Community CTA -->
+          <div class="screens-community-cta">
+            <div class="screens-community-cta-icon">
+              <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <div class="screens-community-cta-text">
+              <div class="screens-community-cta-title">Know a screen we're missing?</div>
+              <div class="screens-community-cta-sub">Help the community by submitting specs for your local premium cinema.</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="submit-missing-screen-btn-2">Submit Missing Screen</button>
+          </div>
         </div>
       </div>`;
 
@@ -1619,18 +1680,24 @@ document.addEventListener("DOMContentLoaded", () => {
     renderScreensList();
     attachScreensListeners();
     document.getElementById("submit-missing-screen-btn")?.addEventListener("click", showSubmitScreenModal);
+    document.getElementById("submit-missing-screen-btn-2")?.addEventListener("click", showSubmitScreenModal);
   }
 
   function getFilteredScreens() {
     let list = window.DB.allScreens;
+
+    // Text search
     if (screensSearchQuery) {
       const q = screensSearchQuery.toLowerCase();
       list = list.filter(s =>
         (s.name   || "").toLowerCase().includes(q) ||
         (s.city   || "").toLowerCase().includes(q) ||
-        (s.format || "").toLowerCase().includes(q)
+        (s.format || "").toLowerCase().includes(q) ||
+        (s.projection || "").toLowerCase().includes(q)
       );
     }
+
+    // Format filter
     if (screensFormatFilter) {
       const fq = screensFormatFilter.toUpperCase();
       list = list.filter(s => {
@@ -1645,31 +1712,91 @@ document.addEventListener("DOMContentLoaded", () => {
         return f.includes(fq);
       });
     }
-    console.log("filteredScreens.length:", list.length);
+
+    // City filter
+    if (screensCityFilter) {
+      list = list.filter(s => (s.city || "") === screensCityFilter);
+    }
+
+    // Sort
+    if (screensSortOption === "largest") {
+      list = [...list].sort((a, b) => (b.area || b.widthFt || 0) - (a.area || a.widthFt || 0));
+    } else if (screensSortOption === "seats") {
+      list = [...list].sort((a, b) => (b.seats || 0) - (a.seats || 0));
+    } else if (screensSortOption === "aspect") {
+      list = [...list].sort((a, b) => {
+        const parseAR = str => {
+          if (!str) return 0;
+          const m = str.match(/([\d.]+)/);
+          return m ? parseFloat(m[1]) : 0;
+        };
+        return parseAR(b.aspectRatio) - parseAR(a.aspectRatio);
+      });
+    } else if (screensSortOption === "az") {
+      list = [...list].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    }
+
     return list;
   }
 
   function renderScreensList() {
-    const all   = getFilteredScreens();
-    const countEl   = document.getElementById("results-count");
-    const grid      = document.getElementById("screens-grid");
-    const loadWrap  = document.getElementById("load-more-wrap");
+    const all      = getFilteredScreens();
+    const countEl  = document.getElementById("screens-result-count");
+    const grid     = document.getElementById("screens-grid");
+    const loadWrap = document.getElementById("load-more-wrap");
 
     if (countEl) countEl.textContent = `${all.length} screens found`;
 
     const page = all.slice(0, screensPage * SCREENS_PER_PAGE);
-    console.log("Number of records rendered:", page.length);
     if (grid) {
       if (page.length === 0) {
-        grid.innerHTML = `<div style="padding:3rem;text-align:center;color:var(--text-3);grid-column:1/-1;">
-          <div style="font-size:0.9rem;color:var(--text-2);margin-bottom:0.5rem;">No screens found</div>
-          <div style="font-size:0.8rem;">Try a different search or filter</div>
-        </div>`;
+        grid.innerHTML = `
+          <div class="screens-empty-state">
+            <svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24" style="opacity:0.3; margin-bottom:1rem;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="m8 21 4-4 4 4"/></svg>
+            <div class="empty-state-title">No screens found</div>
+            <div class="empty-state-sub">Try adjusting your search or filters</div>
+          </div>`;
       } else {
-        grid.innerHTML = page.map(s => screenCardHtml(s)).join("");
+        grid.innerHTML = page.map((s, i) => screenListRowHtml(s, i)).join("");
       }
     }
     if (loadWrap) loadWrap.style.display = page.length >= all.length ? "none" : "flex";
+  }
+
+  // Compact list-row card for the redesigned Screens page
+  function screenListRowHtml(s, idx) {
+    const fClass = (s.format || "").toLowerCase().replace(/\s+/g, "-");
+    const loc = [s.city, s.country !== "India" ? s.country : null].filter(Boolean).join(", ");
+
+    let sizeStr = null;
+    if (s.widthFt && s.heightFt) sizeStr = `${s.widthFt}×${s.heightFt} ft`;
+    else if (s.widthFt)          sizeStr = `${s.widthFt} ft wide`;
+    else if (s.screenSize)       sizeStr = s.screenSize;
+
+    const specParts = [
+      s.aspectRatio,
+      sizeStr,
+      s.seats ? `${s.seats} seats` : null,
+    ].filter(Boolean);
+
+    const rankLabel = String(idx + 1).padStart(2, "0");
+
+    return `
+      <a href="#/screen/${s.id}" class="screen-row-item">
+        <div class="screen-row-rank">#${rankLabel}</div>
+        <div class="screen-row-format-badge format-${fClass}">${s.format}</div>
+        <div class="screen-row-info">
+          <div class="screen-row-name">${s.name}</div>
+          <div class="screen-row-location">${loc}</div>
+        </div>
+        <div class="screen-row-specs">
+          ${specParts.length ? `<span class="screen-row-spec-line">${specParts.join(" · ")}</span>` : ""}
+          ${s.projection ? `<span class="screen-row-projection">${s.projection}</span>` : ""}
+        </div>
+        <div class="screen-row-arrow">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+        </div>
+      </a>`;
   }
 
   let screensSearchTimer = null;
@@ -1685,6 +1812,19 @@ document.addEventListener("DOMContentLoaded", () => {
         }, 250);
       });
     }
+
+    document.getElementById("screens-city-select")?.addEventListener("change", e => {
+      screensCityFilter = e.target.value;
+      screensPage = 1;
+      renderScreensList();
+    });
+
+    document.getElementById("screens-sort-select")?.addEventListener("change", e => {
+      screensSortOption = e.target.value;
+      screensPage = 1;
+      renderScreensList();
+    });
+
     document.getElementById("format-chips")?.addEventListener("click", e => {
       const chip = e.target.closest(".chip");
       if (!chip) return;
@@ -1693,10 +1833,12 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll("#format-chips .chip").forEach(c => c.classList.toggle("active", c === chip));
       renderScreensList();
     });
+
     document.getElementById("load-more-btn")?.addEventListener("click", () => {
       screensPage++;
       renderScreensList();
     });
+
   }
 
   // ── DETAIL VIEW ───────────────────────────────────────
