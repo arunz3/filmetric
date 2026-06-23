@@ -11,6 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
     plfs: [],              // raw plfs rows
     otherScreens: [],      // raw other_screens rows
     intlImax: [],          // raw international_imax rows
+    movieTheaters: [],     // raw movie_theater rows
     allScreens: [],        // merged unified screen objects
   };
 
@@ -144,6 +145,31 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
+  function fromMovieTheater(r) {
+    const hash = computeHash((r.name || "") + (r.city || "") + String(r.id));
+    return {
+      _table:      "movie_theater",
+      id:          `mt-${r.id}`,
+      name:        r.name,
+      city:        r.city,
+      state:       r.state || null,
+      country:     r.country || "India",
+      format:      "Movie Theater",
+      projection:  r.projection || null,
+      aspectRatio: r.aspect_ratio || null,
+      widthFt:     r.width_ft ? parseFloat(r.width_ft) : null,
+      heightFt:    r.height_ft ? parseFloat(r.height_ft) : null,
+      area:        (r.width_ft && r.height_ft) ? Math.round(parseFloat(r.width_ft) * parseFloat(r.height_ft)) : null,
+      seats:       r.seats || null,
+      status:      r.status || "Open",
+      lat:         r.lat  || null,
+      lon:         r.long || r.lon || null,
+      audio:       r.audio || null,
+      remarks:     r.remarks || null,
+      image:       pickImage("PLF", hash),
+    };
+  }
+
   function fromIntlImax(r) {
     const hash = computeHash((r.cinema_name || "") + (r.location || "") + String(r.id));
     let widthFt = null, heightFt = null, area = null;
@@ -224,29 +250,33 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const [ii, plf, os, intl] = await Promise.all([
+      const [ii, plf, os, intl, mt] = await Promise.all([
         sbFetch("indian_imax"),
         sbFetch("plfs"),
         sbFetch("other_screens"),
         sbFetch("international_imax"),
+        sbFetch("movie_theater"),
       ]);
 
-      window.DB.indianImax   = ii   || [];
-      window.DB.plfs         = plf  || [];
-      window.DB.otherScreens = os   || [];
-      window.DB.intlImax     = intl || [];
+      window.DB.indianImax    = ii   || [];
+      window.DB.plfs          = plf  || [];
+      window.DB.otherScreens  = os   || [];
+      window.DB.intlImax      = intl || [];
+      window.DB.movieTheaters = mt   || [];
 
       // Log: table counts
       console.log("indian_imax count:", ii ? ii.length : 0);
       console.log("plfs count:", plf ? plf.length : 0);
       console.log("other_screens count:", os ? os.length : 0);
       console.log("international_imax count:", intl ? intl.length : 0);
+      console.log("movie_theater count:", mt ? mt.length : 0);
 
       // Build unified allScreens (India only, for main browse)
       const mapped = [
         ...ii.map(r  => fromIndianImax(r)),
         ...plf.map(r => fromPlf(r)),
         ...os.map(r  => fromOtherScreen(r)),
+        ...(mt || []).map(r => fromMovieTheater(r)),
       ];
       window.DB.allScreens = mapped;
 
@@ -256,7 +286,7 @@ document.addEventListener("DOMContentLoaded", () => {
       // Output all unique format values
       console.log("Unique formats:", new Set(mapped.map(s => s.format)));
 
-      console.log(`Filmetric: Loaded ${ii.length} Indian IMAX + ${plf.length} PLFs + ${os.length} other screens + ${intl.length} international IMAX.`);
+      console.log(`Filmetric: Loaded ${ii.length} Indian IMAX + ${plf.length} PLFs + ${os.length} other screens + ${intl.length} international IMAX + ${(mt||[]).length} movie theaters.`);
     } catch (e) {
       console.error("Filmetric: Data load failed —", e.message);
     }
@@ -1577,6 +1607,7 @@ document.addEventListener("DOMContentLoaded", () => {
       else if (f.includes("ONYX"))   formats.add("Samsung Onyx");
       else if (f.includes("SCREENX") || f.includes("SCREEN X")) formats.add("ScreenX");
       else if (f.includes("HDR"))    formats.add("HDR by Barco");
+      else if (f.includes("MOVIE THEATER")) formats.add("Movie Theater");
       else                           formats.add("Other");
     });
     return ["All", ...Array.from(formats).sort()];
@@ -1702,13 +1733,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const fq = screensFormatFilter.toUpperCase();
       list = list.filter(s => {
         const f = (s.format || "").toUpperCase();
-        if (fq === "IMAX")         return f.includes("IMAX");
-        if (fq === "DOLBY CINEMA") return f.includes("DOLBY");
-        if (fq === "EPIQ")         return f.includes("EPIQ");
-        if (fq === "PLF")          return f.includes("PLF") || f.includes("PXL") || f.includes("PCX");
-        if (fq === "SAMSUNG ONYX") return f.includes("ONYX");
-        if (fq === "SCREENX")      return f.includes("SCREENX") || f.includes("SCREEN X");
-        if (fq === "HDR BY BARCO") return f.includes("HDR");
+        if (fq === "IMAX")           return f.includes("IMAX");
+        if (fq === "DOLBY CINEMA")   return f.includes("DOLBY");
+        if (fq === "EPIQ")           return f.includes("EPIQ");
+        if (fq === "PLF")            return f.includes("PLF") || f.includes("PXL") || f.includes("PCX");
+        if (fq === "SAMSUNG ONYX")   return f.includes("ONYX");
+        if (fq === "SCREENX")        return f.includes("SCREENX") || f.includes("SCREEN X");
+        if (fq === "HDR BY BARCO")   return f.includes("HDR");
+        if (fq === "MOVIE THEATER")  return f.includes("MOVIE THEATER");
         return f.includes(fq);
       });
     }
