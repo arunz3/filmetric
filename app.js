@@ -259,7 +259,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Fetch movie_theater separately — table may not exist yet, so don't let it block the main load
       let mt = [];
-      try { mt = await sbFetch("movie_theater") || []; } catch(e) { console.warn("movie_theater fetch failed:", e.message); }
+      try { mt = await sbFetch("movie_theaters") || []; } catch(e) { console.warn("movie_theaters fetch failed:", e.message); }
 
       window.DB.indianImax    = ii   || [];
       window.DB.plfs          = plf  || [];
