@@ -909,7 +909,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="user-menu-wrap" id="user-menu-wrap">
           <button class="user-menu-trigger" id="user-menu-trigger">
             <div class="user-avatar-sm">${avatar}</div>
-            <span class="desktop-only" style="margin-left:0;">${currentUser.username}</span>
+            <span class="desktop-only" style="margin-left:0;">${escapeHtml(currentUser.username)}</span>
           </button>
           <div class="user-dropdown" id="user-dropdown">
             <a href="#/profile">Profile</a>
@@ -1509,7 +1509,7 @@ document.addEventListener("DOMContentLoaded", () => {
               <div class="movie-suggestion-item" data-movie-id="${m.imdbID}" style="display:flex; gap:0.75rem; padding:0.5rem; cursor:pointer;">
                 ${poster ? `<img src="${poster}" class="movie-poster-thumb" style="width:30px; height:45px; object-fit:cover; border-radius:2px;">` : `<div class="movie-poster-thumb" style="width:30px; height:45px; background:var(--surface-3); border-radius:2px;"></div>`}
                 <div>
-                  <div class="movie-suggestion-title" style="font-size:0.85rem; font-weight:500; color:var(--text);">${m.Title}</div>
+                  <div class="movie-suggestion-title" style="font-size:0.85rem; font-weight:500; color:var(--text);">${escapeHtml(m.Title)}</div>
                   <div class="movie-suggestion-year" style="font-size:0.7rem; color:var(--text-3);">${year}</div>
                 </div>
               </div>`;
@@ -2142,11 +2142,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 <div style="width:32px; height:32px; background:var(--surface-3); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:600; color:var(--cream); overflow:hidden; border:1px solid var(--border); flex-shrink:0;">${userAvatar}</div>
                 <div style="flex:1;">
                   <div style="display:flex; align-items:center; gap:0.5rem;">
-                    <span style="font-size:0.85rem; font-weight:600; color:var(--text);">${r.profiles?.username || "Anonymous"}</span>
+                    <span style="font-size:0.85rem; font-weight:600; color:var(--text);">${escapeHtml(r.profiles?.username || "Anonymous")}</span>
                     <span style="font-size:0.75rem; color:var(--cream); letter-spacing:-1px;">${stars}</span>
                     ${deleteBtn}
                   </div>
-                  <p style="font-size:0.8rem; color:var(--text-2); line-height:1.5; margin-top:4px;">${r.review || ""}</p>
+                  <p style="font-size:0.8rem; color:var(--text-2); line-height:1.5; margin-top:4px;">${escapeHtml(r.review || "")}</p>
                   <div style="font-size:0.65rem; color:var(--text-3); margin-top:4px;">${new Date(r.created_at).toLocaleDateString()}</div>
                 </div>
               </div>
@@ -3151,9 +3151,9 @@ document.addEventListener("DOMContentLoaded", () => {
               const year = m.Year || "";
               return `
                 <div class="movie-suggestion-item" data-movie-id="${m.imdbID}">
-                  ${poster ? `<img src="${poster}" alt="${m.Title}" class="movie-poster-thumb">` : `<div class="movie-poster-thumb" style="background:var(--surface-3);"></div>`}
+                  ${poster ? `<img src="${poster}" alt="${escapeHtml(m.Title)}" class="movie-poster-thumb">` : `<div class="movie-poster-thumb" style="background:var(--surface-3);"></div>`}
                   <div>
-                    <div class="movie-suggestion-title">${m.Title}</div>
+                    <div class="movie-suggestion-title">${escapeHtml(m.Title)}</div>
                     <div class="movie-suggestion-year">${year}</div>
                   </div>
                 </div>`;
@@ -3310,7 +3310,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="profile-header" style="border:none; margin:0; padding:0;">
             <div class="profile-avatar">${avatar}</div>
             <div>
-              <div class="profile-username">${currentUser.username}</div>
+              <div class="profile-username">${escapeHtml(currentUser.username)}</div>
               <div class="profile-join">Member since ${currentUser.joinDate || "June 2026"}</div>
             </div>
           </div>
