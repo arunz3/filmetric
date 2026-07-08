@@ -1665,7 +1665,7 @@ document.addEventListener("DOMContentLoaded", () => {
               <div class="screens-search-wrap">
                 <svg class="screens-search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                 <input type="text" class="screens-search-input" id="screens-search"
-                  placeholder="Search name, city, format…" value="${screensSearchQuery}">
+                  placeholder="Search name, city, format…" value="${escapeHtml(screensSearchQuery)}">
               </div>
 
               <!-- City Dropdown -->
@@ -2128,8 +2128,8 @@ document.addEventListener("DOMContentLoaded", () => {
           reviewsList.innerHTML = reviews.map(r => {
             const stars = "★".repeat(r.rating) + "☆".repeat(5 - r.rating);
             const userAvatar = r.profiles?.avatar_url 
-              ? `<img src="${r.profiles.avatar_url}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;">`
-              : (r.profiles?.username || "?").substring(0,2).toUpperCase();
+              ? `<img src="${escapeHtml(r.profiles.avatar_url)}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;">`
+              : escapeHtml((r.profiles?.username || "?").substring(0,2).toUpperCase());
             
             const isOwnReview = currentUser && r.user_id === currentUser.id;
             const isAdmin = currentUser && currentUser.role === 'admin';
@@ -2142,11 +2142,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 <div style="width:32px; height:32px; background:var(--surface-3); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:600; color:var(--cream); overflow:hidden; border:1px solid var(--border); flex-shrink:0;">${userAvatar}</div>
                 <div style="flex:1;">
                   <div style="display:flex; align-items:center; gap:0.5rem;">
-                    <span style="font-size:0.85rem; font-weight:600; color:var(--text);">${r.profiles?.username || "Anonymous"}</span>
+                    <span style="font-size:0.85rem; font-weight:600; color:var(--text);">${escapeHtml(r.profiles?.username || "Anonymous")}</span>
                     <span style="font-size:0.75rem; color:var(--cream); letter-spacing:-1px;">${stars}</span>
                     ${deleteBtn}
                   </div>
-                  <p style="font-size:0.8rem; color:var(--text-2); line-height:1.5; margin-top:4px;">${r.review || ""}</p>
+                  <p style="font-size:0.8rem; color:var(--text-2); line-height:1.5; margin-top:4px;">${escapeHtml(r.review || "")}</p>
                   <div style="font-size:0.65rem; color:var(--text-3); margin-top:4px;">${new Date(r.created_at).toLocaleDateString()}</div>
                 </div>
               </div>
@@ -2220,7 +2220,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (list) {
           list.innerHTML = photos.map(p => `
             <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border); aspect-ratio:16/9; background:#000;">
-              <img src="${p.image_url}" style="width:100%; height:100%; object-fit:cover; cursor:pointer;" alt="Theatre Photo" onclick="window.open('${p.image_url}', '_blank')">
+              <a href="${escapeHtml(p.image_url)}" target="_blank" rel="noopener noreferrer" style="display: block; width: 100%; height: 100%;">
+                <img src="${escapeHtml(p.image_url)}" style="width:100%; height:100%; object-fit:cover; cursor:pointer;" alt="Theatre Photo">
+              </a>
             </div>`).join("");
           document.getElementById("detail-photos-gallery").style.display = "block";
         }
@@ -2286,7 +2288,7 @@ document.addEventListener("DOMContentLoaded", () => {
             
             <!-- Search & Filters -->
             <div class="nearme-controls" style="display: flex; flex-direction: column; gap: 0.75rem;">
-              <input type="text" id="nearme-search-input" class="filter-search" placeholder="Search by name or city..." value="${nearMeSearchQuery}" style="width: 100%; font-size: 0.8rem; padding: 0.5rem 0.75rem;">
+              <input type="text" id="nearme-search-input" class="filter-search" placeholder="Search by name or city..." value="${escapeHtml(nearMeSearchQuery)}" style="width: 100%; font-size: 0.8rem; padding: 0.5rem 0.75rem;">
               
               <div style="display: flex; gap: 0.5rem; width: 100%;">
                 <select id="nearme-format-select" class="screens-filter-bar select" style="flex: 1; font-size: 0.75rem; padding: 0.4rem 0.5rem; height: 32px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: var(--r-md);">
@@ -3463,9 +3465,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:1rem;">
                   ${data.photos.map(p => `
                     <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border); background:#000; position:relative;">
-                      <img src="${p.image_url}" style="width:100%; height:120px; object-fit:cover; display:block; cursor:pointer;" onclick="window.open('${p.image_url}', '_blank')">
+                      <a href="${escapeHtml(p.image_url)}" target="_blank" rel="noopener noreferrer" style="display:block;">
+                        <img src="${escapeHtml(p.image_url)}" style="width:100%; height:120px; object-fit:cover; display:block; cursor:pointer;">
+                      </a>
                       <div style="padding:0.5rem; font-size:0.75rem; display:flex; justify-content:space-between; align-items:center; background:var(--surface);">
-                        <a href="#/screen/${p.theatre_id}" style="color:var(--text-2); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%;">Screen Info</a>
+                        <a href="#/screen/${escapeHtml(p.theatre_id)}" style="color:var(--text-2); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%;">Screen Info</a>
                         <span style="font-size:0.65rem; padding:1px 6px; border-radius:3px; font-weight:500; text-transform:uppercase; ${p.approved ? 'color:#7EE787; background:rgba(126,231,135,0.1);' : 'color:#D2A8FF; background:rgba(210,168,255,0.1);'}">${p.approved ? 'Approved' : 'Pending'}</span>
                       </div>
                     </div>`).join("")}
@@ -3485,8 +3489,8 @@ document.addEventListener("DOMContentLoaded", () => {
                   ${data.corrections.map(c => `
                     <div class="spec-row" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; padding-bottom:1rem; border-bottom:1px solid var(--border); margin:0;">
                       <div style="text-align:left;">
-                        <div style="font-size:0.85rem; font-weight:600;"><a href="#/screen/${c.theatre_id}" style="color:inherit; text-decoration:none;">${getTheatreName(c.theatre_id)}</a></div>
-                        <div style="font-size:0.75rem; color:var(--text-2); margin-top:2px;">Field: <span style="color:var(--cream);">${c.field_name}</span> &middot; Proposed: "${c.proposed_value}"</div>
+                        <div style="font-size:0.85rem; font-weight:600;"><a href="#/screen/${escapeHtml(c.theatre_id)}" style="color:inherit; text-decoration:none;">${escapeHtml(getTheatreName(c.theatre_id))}</a></div>
+                        <div style="font-size:0.75rem; color:var(--text-2); margin-top:2px;">Field: <span style="color:var(--cream);">${escapeHtml(c.field_name)}</span> &middot; Proposed: "${escapeHtml(c.proposed_value)}"</div>
                         ${c.comment ? `<div style="font-size:0.75rem; color:var(--text-3); font-style:italic; margin-top:4px;">"${escapeHtml(c.comment)}"</div>` : ''}
                       </div>
                       <span style="font-size:0.65rem; padding:2px 8px; border-radius:3px; font-weight:500; text-transform:uppercase; ${c.status === 'Approved' ? 'color:#7EE787; background:rgba(126,231,135,0.1);' : c.status === 'Rejected' ? 'color:#FF7B72; background:rgba(255,123,114,0.1);' : 'color:#D2A8FF; background:rgba(210,168,255,0.1);'}">${c.status}</span>
@@ -3512,8 +3516,8 @@ document.addEventListener("DOMContentLoaded", () => {
                   ${data.submissions.map(s => `
                     <div class="spec-row" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; padding-bottom:1rem; border-bottom:1px solid var(--border); margin:0;">
                       <div style="text-align:left;">
-                        <div style="font-size:0.85rem; font-weight:600; color:var(--text);">${s.theatre_name}</div>
-                        <div style="font-size:0.75rem; color:var(--text-2); margin-top:2px;">City: ${s.city} &middot; Format: ${s.format} &middot; Projection: ${s.projection || 'Unknown'}</div>
+                        <div style="font-size:0.85rem; font-weight:600; color:var(--text);">${escapeHtml(s.theatre_name)}</div>
+                        <div style="font-size:0.75rem; color:var(--text-2); margin-top:2px;">City: ${escapeHtml(s.city)} &middot; Format: ${escapeHtml(s.format)} &middot; Projection: ${escapeHtml(s.projection || 'Unknown')}</div>
                         <div style="font-size:0.65rem; color:var(--text-3); margin-top:4px;">Submitted on ${new Date(s.created_at).toLocaleDateString()}</div>
                       </div>
                       <span style="font-size:0.65rem; padding:2px 8px; border-radius:3px; font-weight:500; text-transform:uppercase; ${s.status === 'Approved' ? 'color:#7EE787; background:rgba(126,231,135,0.1);' : s.status === 'Rejected' ? 'color:#FF7B72; background:rgba(255,123,114,0.1);' : 'color:#D2A8FF; background:rgba(210,168,255,0.1);'}">${s.status}</span>
